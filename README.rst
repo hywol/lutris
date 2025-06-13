@@ -20,12 +20,12 @@ If you have not installed Lutris through your package manager and are using the
 source package, it is recommended that you install lutris at least once, even an
 older version to have all dependencies available.
 Once all dependencies are satisfied, you can run lutris directly from the source
-directory with `./bin/lutris`
+directory with ``./bin/lutris``
 
 If you need to run lutris through gdb to troubleshoot segmentation faults, you
 can use the following command:
 
-`gdb -ex r --args "/usr/bin/python3" "./bin/lutris"`
+``gdb -ex r --args "/usr/bin/python3" "./bin/lutris"``
 
 Installer scripts
 =================
@@ -41,7 +41,6 @@ Game library
 Optional accounts can be created at `lutris.net
 <https://lutris.net>`_ and linked with Lutris clients.
 This enables your client to automatically sync fetch library from the website.
-**It is currently not possible to sync from the client to the cloud.**
 Via the website, it is also possible to sync your Steam library to your Lutris
 library.
 
@@ -52,7 +51,7 @@ This token is stored in ``~/.cache/lutris/auth-token``.
 Configuration files
 ===================
 
-* ``~/.config/lutris``: The client, runners, and game configuration files
+* ``~/.local/share/lutris``: The client, runners, and game configuration files
 
    There is no need to manually edit these files as everything should be done from the client.
 
@@ -64,21 +63,16 @@ Configuration files
 
 * ``games/*.yml``: Game-specific configurations
 
-Game-specific configurations overwrite runner-specific configurations, which in
-turn overwrite the system configuration.
-
-Runners and the game database
-=============================
-
-``~/.local/share/lutris``: All data necessary to manage Lutris' library and games, including:
-
 * ``pga.db``: An SQLite database tracking the game library, game installation status, various file locations, and some additional metadata
 
-* ``runners/*``: Runners downloaded from `lutris.net <https://lutris.net>`
+* ``runners/*``: Runners downloaded from `lutris.net <https://lutris.net>`_
 
 * ``banners/*.jpg``: Game banners
 
 ``~/.local/share/icons/hicolor/128x128/apps/lutris_*.png``: Game icons
+
+Game-specific configurations overwrite runner-specific configurations, which in
+turn overwrite the system configuration.
 
 Command line options
 ====================
@@ -95,7 +89,7 @@ The following command line arguments are available::
 -s, --list-steam-games           List available Steam games
 --list-steam-folders             List all known Steam library folders
 --list-runners                   List all known runners
---list-wine-versions              List all known Wine runners
+--list-wine-versions             List all known Wine runners
 -a, --list-all-service-games     List all games for all services in database
 --list-service-games             List all games for provided service in database
 -r, --install-runner             Install a Runner
@@ -104,7 +98,7 @@ The following command line arguments are available::
 --reinstall                      Reinstall game
 --display=DISPLAY                X display to use
 --export <game>                  Exports specified game (requires --dest)
---import <game.7z)               Import games from exportfile (requires --dest)
+--import <game.7z>               Import games from exportfile (requires --dest)
 --dest <folder>                  Specifies Export/Import destination folder
 
 Additionally, you can pass a ``lutris:`` protocol link followed by a game
@@ -128,6 +122,8 @@ Come with us!
 
 Want to make Lutris better? Help implement features, fix bugs, test
 pre-releases, or simply chat with the developers?
+
+Improve the code by just cloning the repository, editing the scripts and then starting Lutris with the ``./bin/lutris -d`` command.
 
 You can always reach us on:
 

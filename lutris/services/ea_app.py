@@ -64,17 +64,19 @@ class EAAppArtSmall(ServiceMedia):
     api_field = "packArtSmall"
 
     def get_media_url(self, details: Dict[str, Any]) -> Optional[str]:
-        if "imageServer" not in details:
+        image_server = details.get("imageServer")
+        if not image_server:
             logger.warning("No field 'imageServer' in API game %s", details)
             return None
-        if "i18n" not in details:
+        i18n = details.get("i18n")
+        if not i18n:
             logger.warning("No field 'i18n' in API game %s", details)
             return None
-        i18n = details["i18n"]
-        if self.api_field not in i18n:
+        field = i18n.get(self.api_field)
+        if not field:
             logger.warning("No field 'i18n.%s' in API game %s", self.api_field, details)
             return None
-        return details["imageServer"] + i18n[self.api_field]
+        return image_server + field
 
 
 class EAAppArtMedium(EAAppArtSmall):
@@ -161,14 +163,14 @@ class EAAppService(OnlineService):
     token_path = os.path.join(settings.CACHE_DIR, "ea_app/auth_token")
     origin_redirect_uri = "https://www.origin.com/views/login.html"
     login_url = "https://www.ea.com/login"
-    redirect_uri = "https://www.ea.com/"
+    redirect_uris = ["https://www.ea.com/"]
     origin_login_url = (
         "https://accounts.ea.com/connect/auth"
         "?response_type=code&client_id=ORIGIN_SPA_ID&display=originXWeb/login"
         "&locale=en_US&release_type=prod"
         "&redirect_uri=%s"
     ) % origin_redirect_uri
-    login_user_agent = "Mozilla/5.0 (X11; Linux x86_64; rv:100.0) Gecko/20100101 Firefox/100.0 QtWebEngine/5.8.0"
+    login_user_agent = settings.DEFAULT_USER_AGENT + " QtWebEngine/5.8.0"
 
     def __init__(self):
         super().__init__()

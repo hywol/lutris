@@ -1,6 +1,5 @@
 import os
 
-from lutris.settings import RUNTIME_DIR
 from lutris.util import system
 from lutris.util.linux import LINUX_SYSTEM
 from lutris.util.nvidia import get_nvidia_dll_path
@@ -8,10 +7,11 @@ from lutris.util.wine.dll_manager import DLLManager
 
 
 class DXVKNVAPIManager(DLLManager):
-    component = "DXVK-NVAPI"
-    base_dir = os.path.join(RUNTIME_DIR, "dxvk-nvapi")
-    versions_path = os.path.join(base_dir, "dxvk-nvapi_versions.json")
-    managed_dlls = ("nvapi", "nvapi64", "nvml")
+    name = "dxvk-nvapi"
+    human_name = "DXVK-NVAPI"
+    # apparently, nvofapi.dll (the 32 bit version) is not being included here -
+    # see https://github.com/jp7677/dxvk-nvapi/pull/213
+    managed_dlls = ("nvapi", "nvapi64", "nvml", "nvofapi64")
     releases_url = "https://api.github.com/repos/lutris/dxvk-nvapi/releases"
     dlss_dlls = ("nvngx", "_nvngx")
 

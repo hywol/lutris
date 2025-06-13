@@ -78,9 +78,13 @@ class GameGridView(Gtk.IconView, GameView):
     def get_path_at(self, x, y):
         return self.get_path_at_pos(x, y)
 
-    def set_selected(self, path):
+    def set_selected(self, paths, scroll_into_view=False):
         self.unselect_all()
-        self.select_path(path)
+
+        for idx, path in enumerate(paths):
+            self.select_path(path)
+            if scroll_into_view and idx == 0:
+                self.scroll_to_path(path, False, 0.0, 0.0)
 
     def get_selected(self):
         """Return list of all selected items"""
@@ -89,6 +93,19 @@ class GameGridView(Gtk.IconView, GameView):
     def get_game_id_for_path(self, path):
         iterator = self.get_model().get_iter(path)
         return self.get_model().get_value(iterator, COL_ID)
+
+    def get_path_for_game_id(self, game_id):
+        path_found = None
+
+        def check_path(model, path, iterator):
+            nonlocal path_found
+            row_id = model.get_value(iterator, COL_ID)
+            if game_id == row_id:
+                path_found = path
+                return True  # stop iteration
+
+        self.get_model().foreach(check_path)
+        return path_found
 
     def on_item_activated(self, _view, _path):
         """Handles double clicks"""
@@ -100,8 +117,7 @@ class GameGridView(Gtk.IconView, GameView):
     def on_selection_changed(self, _view):
         """Handles selection changes"""
         selected_items = self.get_selected()
-        if selected_items:
-            self.emit("game-selected", selected_items)
+        self.emit("game-selected", selected_items)
 
     def on_style_updated(self, widget):
         if self.text_renderer:

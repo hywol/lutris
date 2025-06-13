@@ -8,7 +8,10 @@ import resource
 import shutil
 import sys
 from collections import Counter, defaultdict
+from gettext import gettext as _
 
+from lutris import settings
+from lutris.exceptions import MisconfigurationError
 from lutris.util import flatpak, system
 from lutris.util.graphics import drivers, glxinfo, vkquery
 from lutris.util.log import logger
@@ -32,11 +35,12 @@ SYSTEM_COMPONENTS = {
         "lspci",
         "ldconfig",
         "wine",
-        "fluidsynth",
     ],
     "OPTIONAL_COMMANDS": [
+        "fluidsynth",
         "lsi-steam",
         "nvidia-smi",
+        "fluidsynth",
     ],
     "TERMINALS": [
         "xterm",
@@ -69,6 +73,7 @@ SYSTEM_COMPONENTS = {
         "deepin-terminal",
         "wezterm",
         "foot",
+        "ptyxis",
     ],
     "LIBRARIES": {
         "OPENGL": ["libGL.so.1"],
@@ -93,6 +98,7 @@ class LinuxSystem:  # pylint: disable=too-many-public-methods
         ("/usr/lib32", "/usr/lib64"),
         ("/lib/i386-linux-gnu", "/lib/x86_64-linux-gnu"),
         ("/usr/lib/i386-linux-gnu", "/usr/lib/x86_64-linux-gnu"),
+        ("/usr/lib", "/opt/32/lib"),
     ]
 
     soundfont_folders = [
@@ -480,6 +486,7 @@ def gather_system_info_dict():
     system_dict["OS"] = " ".join(system_info["dist"])
     system_dict["Arch"] = system_info["arch"]
     system_dict["Kernel"] = system_info["kernel"]
+    system_dict["Lutris Version"] = settings.VERSION
     system_dict["Desktop"] = system_info["env"].get("XDG_CURRENT_DESKTOP", "Not found")
     system_dict["Display Server"] = system_info["env"].get("XDG_SESSION_TYPE", "Not found")
     system_info_readable["System"] = system_dict
@@ -531,3 +538,12 @@ def get_default_terminal():
     if terms:
         return terms[0]
     logger.error("Couldn't find a terminal emulator.")
+
+
+def get_required_default_terminal():
+    """Return the default terminal emulator, or raises MisconfigurationError if none can be
+    found."""
+    term = get_default_terminal()
+    if term:
+        return term
+    raise MisconfigurationError(_("No terminal emulator could be detected."))

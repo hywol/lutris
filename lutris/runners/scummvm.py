@@ -1,9 +1,11 @@
 import os
 import subprocess
 from gettext import gettext as _
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from lutris import settings
+from lutris.config import LutrisConfig
+from lutris.exceptions import MissingExecutableError
 from lutris.runners.runner import Runner
 from lutris.util import system
 from lutris.util.strings import split_arguments
@@ -20,23 +22,25 @@ _supported_scale_factors = {
 }
 
 
-def _get_opengl_warning(config, _option_key):
-    if "scaler" in config and "renderer" in config:
-        renderer = config["renderer"]
+def _get_opengl_warning(_option_key: str, config: LutrisConfig) -> Optional[str]:
+    runner_config = config.runner_config
+    if "scaler" in runner_config and "renderer" in runner_config:
+        renderer = runner_config["renderer"]
         if renderer and renderer != "software":
-            scaler = config["scaler"]
+            scaler = runner_config["scaler"]
             if scaler and scaler != "normal":
                 return _("<b>Warning</b> Scalers may not work with OpenGL rendering.")
 
     return None
 
 
-def _get_scale_factor_warning(config, _option_key):
+def _get_scale_factor_warning(_option_key: str, config: LutrisConfig) -> Optional[str]:
     """Generate a warning message for when the scaler and scale-factor can't be used together."""
-    if "scaler" in config and "scale-factor" in config:
-        scaler = config["scaler"]
+    runner_config = config.runner_config
+    if "scaler" in runner_config and "scale-factor" in runner_config:
+        scaler = runner_config["scaler"]
         if scaler in _supported_scale_factors:
-            scale_factor = config["scale-factor"]
+            scale_factor = runner_config["scale-factor"]
             if scale_factor not in _supported_scale_factors[scaler]:
                 return _("<b>Warning</b> The '%s' scaler does not work with a scale factor of %s.") % (
                     scaler,
@@ -55,7 +59,7 @@ class scummvm(Runner):
     flatpak_id = "org.scummvm.ScummVM"
     game_options = [
         {"option": "game_id", "type": "string", "label": _("Game identifier")},
-        {"option": "path", "type": "directory_chooser", "label": _("Game files location")},
+        {"option": "path", "type": "directory", "label": _("Game files location")},
         {
             "option": "args",
             "type": "string",
@@ -150,7 +154,7 @@ class scummvm(Runner):
             ],
             "warning": _get_opengl_warning,
             "help": _(
-                "The algorithm used to scale up the game's base " "resolution, resulting in different visual styles. "
+                "The algorithm used to scale up the game's base resolution, resulting in different visual styles. "
             ),
         },
         {
@@ -245,7 +249,7 @@ class scummvm(Runner):
         {
             "option": "datadir",
             "label": _("Data directory"),
-            "type": "directory_chooser",
+            "type": "directory",
             "help": _("Defaults to share/scummvm if unspecified."),
             "advanced": True,
         },
@@ -278,8 +282,7 @@ class scummvm(Runner):
             "type": "string",
             "label": _("Engine speed"),
             "help": _(
-                "Sets frames per second limit (0 - 100) for Grim Fandango "
-                "or Escape from Monkey Island (default: 60)."
+                "Sets frames per second limit (0 - 100) for Grim Fandango or Escape from Monkey Island (default: 60)."
             ),
             "advanced": True,
         },
@@ -357,8 +360,7 @@ class scummvm(Runner):
                 ("rwopl3", "rwopl3"),
             ],
             "help": _(
-                "Chooses which emulator is used by ScummVM when the AdLib emulator "
-                "is chosen as the Preferred device."
+                "Chooses which emulator is used by ScummVM when the AdLib emulator is chosen as the Preferred device."
             ),
             "advanced": True,
         },
@@ -480,11 +482,14 @@ class scummvm(Runner):
 
     def get_extra_libs(self) -> List[str]:
         """Scummvm runner ships additional libraries, they may be removed in a future version."""
-        base_runner_path = os.path.join(settings.RUNNER_DIR, "scummvm")
-        if self.get_executable().startswith(base_runner_path):
-            path = os.path.join(settings.RUNNER_DIR, "scummvm/lib")
-            if system.path_exists(path):
-                return [path]
+        try:
+            base_runner_path = os.path.join(settings.RUNNER_DIR, "scummvm")
+            if self.get_executable().startswith(base_runner_path):
+                path = os.path.join(settings.RUNNER_DIR, "scummvm/lib")
+                if system.path_exists(path):
+                    return [path]
+        except MissingExecutableError:
+            pass
 
         return []
 
@@ -514,7 +519,8 @@ class scummvm(Runner):
     def get_run_data(self) -> Dict[str, Any]:
         env = self.get_env()
         lib_paths = filter(None, self.get_extra_libs() + [env.get("LD_LIBRARY_PATH")])
-        env["LD_LIBRARY_PATH"] = os.pathsep.join(lib_paths)
+        if lib_paths:
+            env["LD_LIBRARY_PATH"] = os.pathsep.join(lib_paths)
 
         return {"env": env, "command": self.get_command()}
 
@@ -536,7 +542,8 @@ class scummvm(Runner):
         args = self.game_config.get("args") or ""
         for arg in split_arguments(args):
             command.append(arg)
-        command.append(self.game_config.get("game_id"))
+        if self.game_config.get("game_id"):
+            command.append(self.game_config.get("game_id"))
         output = {"command": command}
 
         extra_libs = self.get_extra_libs()

@@ -239,15 +239,15 @@ class SingleGameActions(GameActions):
             (None, "-", None),
             ("install", _("Install"), self.on_install_clicked),
             ("install_more", _("Install another version"), self.on_install_clicked),
-            ("install_dlcs", "Install DLCs", self.on_install_dlc_clicked),
+            ("install_dlcs", _("Install DLCs"), self.on_install_dlc_clicked),
             ("update", _("Install updates"), self.on_update_clicked),
             ("add", _("Locate installed game"), self.on_locate_installed_game),
             ("desktop-shortcut", _("Create desktop shortcut"), self.on_create_desktop_shortcut),
             ("rm-desktop-shortcut", _("Delete desktop shortcut"), self.on_remove_desktop_shortcut),
             ("menu-shortcut", _("Create application menu shortcut"), self.on_create_menu_shortcut),
             ("rm-menu-shortcut", _("Delete application menu shortcut"), self.on_remove_menu_shortcut),
-            ("steam-shortcut", _("Create steam shortcut"), self.on_create_steam_shortcut),
-            ("rm-steam-shortcut", _("Delete steam shortcut"), self.on_remove_steam_shortcut),
+            ("steam-shortcut", _("Create Steam shortcut"), self.on_create_steam_shortcut),
+            ("rm-steam-shortcut", _("Delete Steam shortcut"), self.on_remove_steam_shortcut),
             ("view", _("View on Lutris.net"), self.on_view_game),
             ("duplicate", _("Duplicate"), self.on_game_duplicate),
             (None, "-", None),
@@ -258,7 +258,8 @@ class SingleGameActions(GameActions):
         """Return a dictionary of actions that should be shown for a game"""
 
         game = self.game
-        if steam_shortcut.vdf_file_exists():
+        has_steam = steam_shortcut.vdf_file_exists()
+        if has_steam:
             has_steam_shortcut = steam_shortcut.shortcut_exists(game)
             is_steam_game = steam_shortcut.is_steam_game(game)
         else:
@@ -283,9 +284,11 @@ class SingleGameActions(GameActions):
             "execute-script": bool(
                 game.is_installed and game.has_runner and game.runner.system_config.get("manual_command")
             ),
-            "desktop-shortcut": (game.is_installed and not xdgshortcuts.desktop_launcher_exists(game.slug, game.id)),
-            "menu-shortcut": (game.is_installed and not xdgshortcuts.menu_launcher_exists(game.slug, game.id)),
-            "steam-shortcut": (game.is_installed and not has_steam_shortcut and not is_steam_game),
+            "desktop-shortcut": bool(
+                game.is_installed and not xdgshortcuts.desktop_launcher_exists(game.slug, game.id)
+            ),
+            "menu-shortcut": bool(game.is_installed and not xdgshortcuts.menu_launcher_exists(game.slug, game.id)),
+            "steam-shortcut": bool(has_steam and game.is_installed and not has_steam_shortcut and not is_steam_game),
             "rm-desktop-shortcut": bool(game.is_installed and xdgshortcuts.desktop_launcher_exists(game.slug, game.id)),
             "rm-menu-shortcut": bool(game.is_installed and xdgshortcuts.menu_launcher_exists(game.slug, game.id)),
             "rm-steam-shortcut": bool(game.is_installed and has_steam_shortcut and not is_steam_game),
@@ -307,10 +310,10 @@ class SingleGameActions(GameActions):
         game = self.game
         manual_command = game.runner.system_config.get("manual_command")
         if path_exists(manual_command):
+            runner = game.runner
+            env = runner.get_env()
             MonitoredCommand(
-                [manual_command],
-                include_processes=[os.path.basename(manual_command)],
-                cwd=game.directory,
+                [manual_command], include_processes=[os.path.basename(manual_command)], cwd=game.directory, env=env
             ).start()
             logger.info("Running %s in the background", manual_command)
 

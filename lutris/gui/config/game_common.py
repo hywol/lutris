@@ -11,7 +11,8 @@ from lutris import runners, settings
 from lutris.config import LutrisConfig, make_game_config_id
 from lutris.game import Game
 from lutris.gui.config import DIALOG_HEIGHT, DIALOG_WIDTH
-from lutris.gui.config.boxes import GameBox, RunnerBox, SystemConfigBox, UnderslungMessageBox
+from lutris.gui.config.boxes import GameBox, RunnerBox, SystemConfigBox
+from lutris.gui.config.widget_generator import WidgetWarningMessageBox
 from lutris.gui.dialogs import DirectoryDialog, ErrorDialog, QuestionDialog, SavableModelessDialog, display_error
 from lutris.gui.dialogs.delegates import DialogInstallUIDelegate
 from lutris.gui.dialogs.move_game import MoveDialog
@@ -24,7 +25,7 @@ from lutris.services.lutris import LutrisBanner, LutrisCoverart, LutrisIcon, dow
 from lutris.services.service_media import resolve_media_path
 from lutris.util.jobs import AsyncCall
 from lutris.util.log import logger
-from lutris.util.strings import gtk_safe, parse_playtime, slugify
+from lutris.util.strings import parse_playtime, slugify
 
 
 # pylint: disable=too-many-instance-attributes, no-member
@@ -43,7 +44,6 @@ class GameDialogCommon(SavableModelessDialog, DialogInstallUIDelegate):
         self.name_entry = None
         self.sortname_entry = None
         self.runner_box = None
-        self.runner_warning_box = None
 
         self.timer_id = None
         self.game = None
@@ -68,6 +68,7 @@ class GameDialogCommon(SavableModelessDialog, DialogInstallUIDelegate):
         self.lutris_config = None
         self.service_medias = {"icon": LutrisIcon(), "banner": LutrisBanner(), "coverart_big": LutrisCoverart()}
         self.notebook_page_generators = {}
+        self.notebook_page_updater = {}
 
         self.build_header_bar()
 
@@ -90,6 +91,10 @@ class GameDialogCommon(SavableModelessDialog, DialogInstallUIDelegate):
         if generator:
             generator()
             del self.notebook_page_generators[index]
+        else:
+            updater = self.notebook_page_updater.get(index)
+            if updater:
+                updater()
 
         self.update_advanced_switch_visibility(index)
         self.update_search_entry_visibility(index)
@@ -153,10 +158,6 @@ class GameDialogCommon(SavableModelessDialog, DialogInstallUIDelegate):
 
         self.runner_box = self._get_runner_box()
         info_box.pack_start(self.runner_box, False, False, 6)  # Runner
-
-        self.runner_warning_box = RunnerMessageBox()
-        info_box.pack_start(self.runner_warning_box, False, False, 6)  # Runner
-        self.runner_warning_box.update_warning(self.runner_name)
 
         info_box.pack_start(self._get_year_box(), False, False, 6)  # Year
 
@@ -478,6 +479,8 @@ class GameDialogCommon(SavableModelessDialog, DialogInstallUIDelegate):
         config_box = box_factory()
         page_index = self._add_notebook_tab(self.build_scrolled_window(config_box), notebook_label)
 
+        self.notebook_page_updater[page_index] = config_box.update_widgets
+
         if page_index == 0:
             config_box.generate_widgets()
         else:
@@ -594,7 +597,6 @@ class GameDialogCommon(SavableModelessDialog, DialogInstallUIDelegate):
             self.runner_name = runner_name
             self.lutris_config = LutrisConfig(runner_slug=self.runner_name, level="game")
         self._rebuild_tabs()
-        self.runner_warning_box.update_warning(self.runner_name)
         self.notebook.set_current_page(current_page)
 
     def _rebuild_tabs(self):
@@ -720,7 +722,7 @@ class GameDialogCommon(SavableModelessDialog, DialogInstallUIDelegate):
     def on_custom_image_reset_clicked(self, _widget, image_type):
         self.refresh_image(image_type)
 
-    def save_custom_media(self, image_type, image_path):
+    def save_custom_media(self, image_type: str, image_path: str) -> None:
         slug = self.slug or self.game.slug
         service_media = self.service_medias[image_type]
         self.game.custom_images.add(image_type)
@@ -737,7 +739,7 @@ class GameDialogCommon(SavableModelessDialog, DialogInstallUIDelegate):
 
             self._save_transcoded_media_to(dest_paths[0], image_type, image_path)
 
-    def _save_copied_media_to(self, dest_path, image_type, image_path):
+    def _save_copied_media_to(self, dest_path: str, image_type: str, image_path: str) -> None:
         """Copies a media file to the dest_path, but trashes the existing media
         for the game first. When complete, this updates the button indicated by
         image_type as well."""
@@ -754,14 +756,15 @@ class GameDialogCommon(SavableModelessDialog, DialogInstallUIDelegate):
 
         service_media.trash_media(slug, completion_function=on_trashed)
 
-    def _save_transcoded_media_to(self, dest_path, image_type, image_path):
+    def _save_transcoded_media_to(self, dest_path: str, image_type: str, image_path: str) -> None:
         """Transcode an image, copying it to a new path and selecting the file type
         based on the file extension of dest_path. Trashes all media for the current
         game too. Runs in the background, and when complete updates the button indicated
         by image_type."""
         slug = self.slug or self.game.slug
         service_media = self.service_medias[image_type]
-        file_format = {".jpg": "jpeg", ".png": "png"}[get_image_file_extension(dest_path)]
+        ext = get_image_file_extension(dest_path) or ".png"
+        file_format = {".jpg": "jpeg", ".png": "png"}[ext]
 
         # If we must transcode the image, we'll scale the image up based on
         # the UI scale factor, to try to avoid blurriness. Of course this won't
@@ -814,19 +817,6 @@ class GameDialogCommon(SavableModelessDialog, DialogInstallUIDelegate):
             service_media.run_system_update_desktop_icons()
 
 
-class RunnerMessageBox(UnderslungMessageBox):
+class RunnerMessageBox(WidgetWarningMessageBox):
     def __init__(self):
         super().__init__(margin_left=12, margin_right=12, icon_name="dialog-warning")
-
-    def update_warning(self, runner_name):
-        try:
-            if runner_name:
-                runner_class = import_runner(runner_name)
-                runner = runner_class()
-                warning = runner.runner_warning
-                if warning:
-                    self.show_markup(warning)
-                    return
-            self.show_markup(None)
-        except Exception as ex:
-            self.show_message(gtk_safe(ex))

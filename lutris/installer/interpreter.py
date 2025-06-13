@@ -8,7 +8,7 @@ from gi.repository import GObject
 from lutris import settings
 from lutris.config import LutrisConfig
 from lutris.database.games import get_game_by_field
-from lutris.exceptions import MisconfigurationError
+from lutris.exceptions import AuthenticationError, MisconfigurationError, UnavailableGameError
 from lutris.gui.dialogs.delegates import Delegate
 from lutris.installer import AUTO_EXE_PREFIX
 from lutris.installer.commands import CommandsMixin
@@ -40,7 +40,7 @@ class ScriptInterpreter(GObject.Object, CommandsMixin):
 
         def report_error(self, error):
             """Called to report an error during installation. The installation will then stop."""
-            logger.exception("Error during installation: %s", error)
+            pass
 
         def report_status(self, status):
             """Called to report the current activity of the installer."""
@@ -201,7 +201,11 @@ class ScriptInterpreter(GObject.Object, CommandsMixin):
         """Get extras and store them to move them at the end of the install"""
         if not self.service or not self.service.has_extras or not self.installer.service_appid:
             return []
-        return self.service.get_extras(self.installer.service_appid)
+        try:
+            return self.service.get_extras(self.installer.service_appid)
+        except (AuthenticationError, UnavailableGameError) as ex:
+            logger.exception("Unable to download list of extras: %s", ex)
+            return []
 
     def launch_install(self, ui_delegate):
         """Launch the install process; returns False if cancelled by the user."""
@@ -252,7 +256,7 @@ class ScriptInterpreter(GObject.Object, CommandsMixin):
 
         for runner in required_runners:
             if not runner.is_installed_for(self):
-                logger.info("Runner %s needs to be installed", runner)
+                logger.info("Runner %s needs to be installed", runner.name)
                 runners_to_install.append(runner)
 
         return runners_to_install
@@ -334,6 +338,7 @@ class ScriptInterpreter(GObject.Object, CommandsMixin):
                 self._finish_install()
         except Exception as ex:
             # Redirect errors to the delegate, instead of the default ErrorDialog.
+            logger.exception("Error during installation: %s", ex)
             self.interpreter_ui_delegate.report_error(ex)
 
     @staticmethod
@@ -380,19 +385,34 @@ class ScriptInterpreter(GObject.Object, CommandsMixin):
         os.chdir(os.path.expanduser("~"))
         system.delete_folder(self.cache_path)
 
-    def revert(self, remove_game_dir=True):
-        """Revert installation in case of an error"""
+    def revert(self, remove_game_dir=True, completion_function=None, error_function=None):
+        """Revert installation in case of an error. Since winekill can be slow,
+        this runs asynchronously and calls cocompletion_function() when successful,
+        or error_function(err) if it fails."""
         logger.info("Cancelling installation of %s", self.installer.game_name)
-        if self.installer.runner.startswith("wine"):
-            self.task({"name": "winekill"})
 
         self.cancelled = True
 
-        if self.abort_current_task:
-            self.abort_current_task()
+        def on_complete(_result, error):
+            if error:
+                error_function(error)
+                return
 
-        if self.target_path and remove_game_dir:
-            system.remove_folder(self.target_path)
+            try:
+                if self.abort_current_task:
+                    self.abort_current_task()
+
+                if self.target_path and remove_game_dir:
+                    system.remove_folder(self.target_path)
+
+                completion_function()
+            except Exception as ex:
+                error_function(ex)
+
+        if self.installer.runner.startswith("wine"):
+            AsyncCall(self.task, on_complete, {"name": "winekill"})
+        else:
+            on_complete(None, None)
 
     def _get_string_replacements(self):
         """Return a mapping of variables to their actual value"""

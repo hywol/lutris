@@ -2,6 +2,7 @@
 
 import array
 import os
+from typing import Optional
 
 import cairo
 from gi.repository import Gdk, GdkPixbuf, Gio, GLib, Gtk
@@ -39,17 +40,21 @@ def open_uri(uri):
     system.spawn(["xdg-open", uri])
 
 
-def get_image_file_extension(path):
+def get_image_file_extension(path: str) -> Optional[str]:
     """Returns the canonical file extension for an image,
     either 'jpg' or 'png'; we deduce this from the file extension, or if that fails the
     file's 'magic' prefix bytes."""
     ext = os.path.splitext(path)[1].casefold()
     if ext in [".jpg", ".jpeg"]:
         return ".jpg"
-    if path == ".png":
+    if ext == ".png":
         return ".png"
 
-    file_type = magic.from_file(path).casefold()
+    try:
+        file_type = magic.from_file(path).casefold()
+    except OSError:
+        return None  # file is missing, or can't read it
+
     if "jpeg image data" in file_type:
         return ".jpg"
     if "png image data" in file_type:
@@ -93,8 +98,8 @@ def get_scaled_surface_by_path(path, size, device_scale, preserve_aspect_ratio=T
         scale_x = min(scale_x, scale_y)
         scale_y = scale_x
 
-    pixel_width = int(round(pixbuf_width * scale_x))
-    pixel_height = int(round(pixbuf_height * scale_y))
+    pixel_width = round(pixbuf_width * scale_x)
+    pixel_height = round(pixbuf_height * scale_y)
 
     surface = cairo.ImageSurface(cairo.Format.ARGB32, pixel_width, pixel_height)  # pylint:disable=no-member
     cr = cairo.Context(surface)  # pylint:disable=no-member

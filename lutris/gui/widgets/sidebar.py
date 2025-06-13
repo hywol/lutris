@@ -10,8 +10,12 @@ from lutris import runners, services
 from lutris.config import LutrisConfig
 from lutris.database import categories as categories_db
 from lutris.database import games as games_db
+from lutris.database import saved_searches as saved_search_db
+from lutris.database.categories import CATEGORIES_UPDATED
+from lutris.database.saved_searches import SAVED_SEARCHES_UPDATED
 from lutris.game import GAME_START, GAME_STOPPED, GAME_UPDATED, Game
 from lutris.gui.config.edit_category_games import EditCategoryGamesDialog
+from lutris.gui.config.edit_saved_search import EditSavedSearchDialog
 from lutris.gui.config.runner import RunnerConfigDialog
 from lutris.gui.config.runner_box import RunnerBox
 from lutris.gui.config.services_box import ServicesBox
@@ -30,6 +34,7 @@ from lutris.services.base import (
 )
 from lutris.util.jobs import schedule_at_idle
 from lutris.util.library_sync import LOCAL_LIBRARY_SYNCED, LOCAL_LIBRARY_SYNCING
+from lutris.util.log import logger
 from lutris.util.strings import get_natural_sort_key
 
 TYPE = 0
@@ -272,7 +277,8 @@ class CategorySidebarRow(SidebarRow):
         return [("applications-system-symbolic", _("Edit Games"), self.on_category_clicked, "manage-category-games")]
 
     def on_category_clicked(self, button):
-        self.application.show_window(EditCategoryGamesDialog, category=self.category, parent=self.get_toplevel())
+        category = categories_db.get_category_by_id(self.category["id"]) or self.category
+        self.application.show_window(EditCategoryGamesDialog, category=category, parent=self.get_toplevel())
         return True
 
     def __lt__(self, other):
@@ -288,6 +294,47 @@ class CategorySidebarRow(SidebarRow):
         return self._sort_name > other._sort_name
 
 
+class SavedSearchSidebarRow(SidebarRow):
+    def __init__(self, saved_search: saved_search_db.SavedSearch, application):
+        super().__init__(
+            saved_search.name,
+            "saved_search",
+            saved_search.name,
+            LutrisSidebar.get_sidebar_icon("folder-saved-search-symbolic"),
+            application=application,
+        )
+        self.saved_search = saved_search
+
+        self._sort_name = locale.strxfrm(saved_search.name)
+
+    @property
+    def sort_key(self):
+        return get_natural_sort_key(self.name)
+
+    def get_actions(self):
+        """Return the definition of buttons to be added to the row"""
+        return [
+            ("applications-system-symbolic", _("Edit Games"), self.on_saved_search_clicked, "manage-category-games")
+        ]
+
+    def on_saved_search_clicked(self, button):
+        saved_search = saved_search_db.get_saved_search_by_id(self.saved_search.saved_search_id) or self.saved_search
+        self.application.show_window(EditSavedSearchDialog, saved_search=saved_search, parent=self.get_toplevel())
+        return True
+
+    def __lt__(self, other):
+        if not isinstance(other, SavedSearchSidebarRow):
+            raise ValueError("Cannot compare %s to %s" % (self.__class__.__name__, other.__class__.__name__))
+
+        return self._sort_name < other._sort_name
+
+    def __gt__(self, other):
+        if not isinstance(other, SavedSearchSidebarRow):
+            raise ValueError("Cannot compare %s to %s" % (self.__class__.__name__, other.__class__.__name__))
+
+        return self._sort_name > other._sort_name
+
+
 class SidebarHeader(Gtk.Box):
     """Header shown on top of each sidebar section"""
 
@@ -295,14 +342,13 @@ class SidebarHeader(Gtk.Box):
         super().__init__(orientation=Gtk.Orientation.VERTICAL)
         self.header_index = header_index
         self.first_row = None
-        self.get_style_context().add_class("sidebar-header")
+
         label = Gtk.Label(
             halign=Gtk.Align.START,
             hexpand=True,
             use_markup=True,
             label="<b>{}</b>".format(name),
         )
-        label.get_style_context().add_class("dim-label")
         box = Gtk.Box(margin_start=9, margin_top=6, margin_bottom=6, margin_right=9)
         box.add(label)
         self.add(box)
@@ -327,13 +373,15 @@ class LutrisSidebar(Gtk.ListBox):
         super().__init__()
         self.set_size_request(200, -1)
         self.application = application
-        self.get_style_context().add_class("lutrissidebar")
+        self.previous_category = None
+        self.get_style_context().add_class("lutris-sidebar")
 
         # Empty values until LutrisWindow explicitly initializes the rows
         # at the right time.
         self.installed_runners = []
         self.runner_visibility_cache = {}
         self.used_categories = set()
+        self.saved_searches = set()
         self.active_services = {}
         self.active_platforms = []
         self.service_rows = {}
@@ -341,6 +389,7 @@ class LutrisSidebar(Gtk.ListBox):
         self.platform_rows = {}
 
         self.category_rows = {}
+        self.saved_search_rows = {}
         # A dummy objects that allows inspecting why/when we have a show() call on the object.
         self.games_row = DummyRow()
         self.running_row = DummyRow()
@@ -349,9 +398,10 @@ class LutrisSidebar(Gtk.ListBox):
         self.row_headers = {
             "library": SidebarHeader(_("Library"), header_index=0),
             "user_category": SidebarHeader(_("Categories"), header_index=1),
-            "service": SidebarHeader(_("Sources"), header_index=2),
-            "runner": SidebarHeader(_("Runners"), header_index=3),
-            "platform": SidebarHeader(_("Platforms"), header_index=4),
+            "saved_search": SidebarHeader(_("Saved Searches"), header_index=2),
+            "service": SidebarHeader(_("Sources"), header_index=3),
+            "runner": SidebarHeader(_("Runners"), header_index=4),
+            "platform": SidebarHeader(_("Platforms"), header_index=5),
         }
         GObject.add_emission_hook(RunnerBox, "runner-installed", self.update_rows)
         GObject.add_emission_hook(RunnerBox, "runner-removed", self.update_rows)
@@ -361,6 +411,8 @@ class LutrisSidebar(Gtk.ListBox):
         GAME_START.register(self.on_game_start)
         GAME_STOPPED.register(self.on_game_stopped)
         GAME_UPDATED.register(self.update_rows)
+        CATEGORIES_UPDATED.register(self.update_rows)
+        SAVED_SEARCHES_UPDATED.register(self.update_rows)
         SERVICE_LOGIN.register(self.on_service_auth_changed)
         SERVICE_LOGOUT.register(self.on_service_auth_changed)
         SERVICE_GAMES_LOADING.register(self.on_service_games_loading)
@@ -429,7 +481,7 @@ class LutrisSidebar(Gtk.ListBox):
         self.add(
             SidebarRow(
                 ".uncategorized",
-                "category",
+                "dynamic_category",
                 _("Uncategorized"),
                 self.get_sidebar_icon("tag-symbolic", ["poi-marker", "favorite-symbolic"]),
             )
@@ -478,6 +530,7 @@ class LutrisSidebar(Gtk.ListBox):
     def selected_category(self, value):
         """Selects the row for the category indicated by a category tuple,
         like ('service', 'lutris')"""
+        self.previous_category = self.selected_category
         selected_row_type, selected_row_id = value or ("category", "all")
         children = list(self.get_children())
         for row in children:
@@ -496,7 +549,7 @@ class LutrisSidebar(Gtk.ListBox):
     def _filter_func(self, row):
         def is_runner_visible(runner_name):
             if runner_name not in self.runner_visibility_cache:
-                runner_config = LutrisConfig(runner_slug=row.id)
+                runner_config = LutrisConfig(runner_slug=row.id, options_supported={"visible_in_side_panel"})
                 self.runner_visibility_cache[runner_name] = runner_config.runner_config.get(
                     "visible_in_side_panel", True
                 )
@@ -512,6 +565,8 @@ class LutrisSidebar(Gtk.ListBox):
 
         if row.type == "user_category":
             allowed_ids = self.used_categories
+        elif row.type == "saved_search":
+            allowed_ids = self.saved_searches
         elif row.type == "service":
             allowed_ids = self.active_services
         else:
@@ -524,7 +579,9 @@ class LutrisSidebar(Gtk.ListBox):
             header = self.row_headers["library"]
         elif before.type in ("category", "dynamic_category") and row.type == "user_category":
             header = self.row_headers[row.type]
-        elif before.type in ("category", "dynamic_category", "user_category") and row.type == "service":
+        elif before.type in ("category", "dynamic_category", "user_category") and row.type == "saved_search":
+            header = self.row_headers[row.type]
+        elif before.type in ("category", "dynamic_category", "user_category", "saved_search") and row.type == "service":
             header = self.row_headers[row.type]
         elif before.type == "service" and row.type == "runner":
             header = self.row_headers[row.type]
@@ -576,33 +633,41 @@ class LutrisSidebar(Gtk.ListBox):
 
         categories_db.remove_unused_categories()
         categories = [c for c in categories_db.get_categories() if not categories_db.is_reserved_category(c["name"])]
+        saved_searches = saved_search_db.get_saved_searches()
 
         self.used_categories = {c["name"] for c in categories}
+        self.saved_searches = {s.name for s in saved_searches}
         self.active_services = services.get_enabled_services()
         self.installed_runners = [runner.name for runner in runners.get_installed()]
         self.active_platforms = games_db.get_used_platforms()
 
         for service_name, service_class in self.active_services.items():
             if service_name not in self.service_rows:
-                service = service_class()
-                row_class = OnlineServiceSidebarRow if service.online else ServiceSidebarRow
-                service_row = row_class(service)
-                self.service_rows[service_name] = service_row
-                insert_row(service_row)
+                try:
+                    service = service_class()
+                    row_class = OnlineServiceSidebarRow if service.online else ServiceSidebarRow
+                    service_row = row_class(service)
+                    insert_row(service_row)
+                    self.service_rows[service_name] = service_row
+                except Exception as ex:
+                    logger.exception("Sidebar row for '%s' could not be loaded: %s", service_name, ex)
 
         for runner_name in self.installed_runners:
             if runner_name not in self.runner_rows:
-                icon_name = runner_name.lower().replace(" ", "") + "-symbolic"
-                runner = runners.import_runner(runner_name)()
-                runner_row = RunnerSidebarRow(
-                    runner_name,
-                    "runner",
-                    runner.human_name,
-                    self.get_sidebar_icon(icon_name),
-                    application=self.application,
-                )
-                self.runner_rows[runner_name] = runner_row
-                insert_row(runner_row)
+                try:
+                    icon_name = runner_name.lower().replace(" ", "") + "-symbolic"
+                    runner = runners.import_runner(runner_name)()
+                    runner_row = RunnerSidebarRow(
+                        runner_name,
+                        "runner",
+                        runner.human_name,
+                        self.get_sidebar_icon(icon_name),
+                        application=self.application,
+                    )
+                    insert_row(runner_row)
+                    self.runner_rows[runner_name] = runner_row
+                except Exception as ex:
+                    logger.exception("Sidebar row for '%s' could not be loaded: %s", service_name, ex)
 
         for platform in self.active_platforms:
             if platform not in self.platform_rows:
@@ -618,6 +683,12 @@ class LutrisSidebar(Gtk.ListBox):
                 new_category_row = CategorySidebarRow(category, application=self.application)
                 self.category_rows[category["name"]] = new_category_row
                 insert_row(new_category_row)
+
+        for saved_search in saved_searches:
+            if saved_search.name not in self.saved_search_rows:
+                new_saved_search_row = SavedSearchSidebarRow(saved_search, application=self.application)
+                self.saved_search_rows[saved_search.name] = new_saved_search_row
+                insert_row(new_saved_search_row)
 
         self.invalidate_filter()
         return True
@@ -635,21 +706,30 @@ class LutrisSidebar(Gtk.ListBox):
                 self.select_row(self.get_children()[0])
 
     def on_service_auth_changed(self, service):
+        logger.debug("Service %s auth changed", service.id)
         if service.id in self.service_rows:
             self.service_rows[service.id].create_button_box()
             self.service_rows[service.id].update_buttons()
+        else:
+            logger.warning("Service %s is not found", service.id)
         return True
 
     def on_service_games_loading(self, service):
+        logger.debug("Service %s games loading", service.id)
         if service.id in self.service_rows:
             self.service_rows[service.id].is_updating = True
             self.service_rows[service.id].update_buttons()
+        else:
+            logger.warning("Service %s is not found", service.id)
         return True
 
     def on_service_games_loaded(self, service):
+        logger.debug("Service %s games loaded", service.id)
         if service.id in self.service_rows:
             self.service_rows[service.id].is_updating = False
             self.service_rows[service.id].update_buttons()
+        else:
+            logger.warning("Service %s is not found", service.id)
         return True
 
     def on_local_library_syncing(self):

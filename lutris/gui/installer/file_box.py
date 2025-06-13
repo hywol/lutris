@@ -47,6 +47,7 @@ class InstallerFileBox(Gtk.VBox):
         download_progress = self.installer_file.create_download_progress_box()
         download_progress.connect("complete", self.on_download_complete)
         download_progress.connect("cancel", self.on_download_cancelled)
+        download_progress.connect("error", self.on_download_error)
         download_progress.show()
         self.installer_file.remove_previous()
         return download_progress
@@ -222,9 +223,14 @@ class InstallerFileBox(Gtk.VBox):
         logger.error("Download from %s cancelled", downloader)
         downloader.set_retry_button()
 
+    def on_download_error(self, downloader, error):
+        logger.error("Download from %s failed: %s", downloader, error)
+        downloader.set_retry_button()
+
     def on_download_complete(self, widget, _data=None):
         """Action called on a completed download."""
         logger.info("Download completed")
+        self.installer_file.check_hash()
         if isinstance(widget, SteamInstaller):
             self.installer_file.dest_file = widget.get_steam_data_path()
         else:

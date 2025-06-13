@@ -7,43 +7,44 @@ from typing import Dict, Generator, List, Optional
 
 from lutris import settings
 from lutris.exceptions import MissingExecutableError
-from lutris.util import system
+from lutris.monitored_command import RUNNING_COMMANDS
+from lutris.util import cache_single, system
 from lutris.util.steam.config import get_steamapps_dirs
+from lutris.util.strings import get_natural_sort_key
 
-GE_PROTON_LATEST = _("GE-Proton (Latest)")
 DEFAULT_GAMEID = "umu-default"
+PROTON_DIR: str = os.path.join(settings.RUNNER_DIR, "proton")
 
 
-def is_proton_version(version: str) -> bool:
+def is_proton_version(version: Optional[str]) -> bool:
     """True if the version indicated specifies a Proton version of Wine; these
-    require special handling. GE_PROTON_LATEST is considered a Proton version, but
-    is even more special- it refers to the Umu installation itself, and whichever
-    Proton it downloads and installs."""
-    return "Proton" in version and "lutris" not in version
+    require special handling."""
+    return version in get_proton_versions()
 
 
-def is_proton_path(wine_path: Optional[str]) -> bool:
-    """True if the wine-path refers to a Proton Wine installation; these require
-    special handling. The Umu path is considered a Proton-path too."""
-    if not wine_path:
-        return False
-
-    if is_umu_path(wine_path):
-        return True
-
-    return "Proton" in wine_path and "lutris" not in wine_path
-
-
-def is_umu_path(wine_path: Optional[str]) -> bool:
+def is_umu_path(path: str) -> bool:
     """True if the path given actually runs Umu; this will run Proton-Wine in turn,
     but can be directed to particular Proton implementation by setting the env-var
     PROTONPATH, but if this is omitted it will default to the latest Proton it
     downloads."""
-    if wine_path:
-        return wine_path.endswith("/umu_run.py") or wine_path.endswith("/umu-run")
+    return bool(path and (path.endswith("/umu_run.py") or path.endswith("/umu-run")))
+
+
+def is_proton_path(wine_path: str) -> bool:
+    """True if the path given actually runs Umu; this will run Proton-Wine in turn,
+    but can be directed to particular Proton implementation by setting the env-var
+    PROTONPATH, but if this is omitted it will default to the latest Proton it
+    downloads.
+
+    This function may be given the wine root directory or a file within such as
+    the wine executable and will return true for either."""
+    for candidate_wine_path in get_proton_versions().values():
+        if system.path_contains(candidate_wine_path, wine_path):
+            return True
     return False
 
 
+@cache_single
 def get_umu_path() -> str:
     """Returns the path to the Umu launch script, which can be run to execute
     a Proton version. It can supply a default Proton, but if the env-var PROTONPATH
@@ -52,11 +53,20 @@ def get_umu_path() -> str:
     The path that this returns will be considered an Umu path by is_umu_path().
 
     If this script can't be found this will raise MissingExecutableError."""
+
+    # 'umu-run' is normally the entry point, and is a zipapp full of Python code. But
+    # We used to ship a directory of loose files, and the entry point then is 'umu_run.py'
+    entry_points = ["umu-run", "umu_run.py"]
+
     custom_path = settings.read_setting("umu_path")
     if custom_path:
-        script_path = os.path.join(custom_path, "umu_run.py")
-        if system.path_exists(script_path):
-            return script_path
+        for entry_point in entry_points:
+            entry_path = os.path.join(custom_path, entry_point)
+            if system.path_exists(entry_path):
+                return entry_path
+
+    # We only use 'umu-run' when searching the path since that's the command
+    # line entry point.
     if system.can_find_executable("umu-run"):
         return system.find_required_executable("umu-run")
     path_candidates = (
@@ -67,72 +77,79 @@ def get_umu_path() -> str:
         settings.RUNTIME_DIR,
     )
     for path_candidate in path_candidates:
-        script_path = os.path.join(path_candidate, "umu", "umu_run.py")
-        if system.path_exists(script_path):
-            return script_path
+        for entry_point in entry_points:
+            entry_path = os.path.join(path_candidate, "umu", entry_point)
+            if system.path_exists(entry_path):
+                return entry_path
     raise MissingExecutableError("Install umu to use Proton")
 
 
+def get_proton_wine_path(version: str) -> str:
+    """Get the wine path for the specified proton version"""
+    wine_path = get_proton_versions().get(version)
+    if wine_path:
+        wine_path_dist = os.path.join(wine_path, "dist/bin/wine")
+        if os.path.exists(wine_path_dist):
+            return wine_path_dist
+
+        wine_path_files = os.path.join(wine_path, "files/bin/wine")
+        if os.path.exists(wine_path_files):
+            return wine_path_files
+
+    raise MissingExecutableError(_("Proton version '%s' is missing its wine executable and can't be used.") % version)
+
+
+def get_proton_path_by_path(wine_path: str) -> str:
+    # Split the path to get the directory containing the file
+    directory_path = os.path.dirname(wine_path)
+
+    # Navigate up two levels to reach the version directory
+    version_directory = os.path.dirname(os.path.dirname(directory_path))
+
+    return version_directory
+
+
+def list_proton_versions() -> List[str]:
+    """Return the list of Proton versions installed in Steam, in sorted order."""
+    return sorted(get_proton_versions().keys(), key=get_natural_sort_key, reverse=True)
+
+
+@cache_single
+def get_proton_versions() -> Dict[str, str]:
+    """Return the dict of Proton versions installed in Steam, which is cached.
+    The keys are the versions, and the values are the paths to those versions,
+    which are their wine-paths."""
+    try:
+        # We can only use a Proton install via the Umu launcher script.
+        _ = get_umu_path()
+    except MissingExecutableError:
+        return {}
+
+    versions = dict()
+    for proton_path in _iter_proton_locations():
+        if os.path.isdir(proton_path):
+            for version in os.listdir(proton_path):
+                if version not in versions:
+                    wine_path = os.path.join(proton_path, version)
+                    if os.path.isfile(os.path.join(wine_path, "proton")):
+                        versions[version] = wine_path
+    return versions
+
+
 def _iter_proton_locations() -> Generator[str, None, None]:
-    """Iterate through all existing Proton locations"""
+    """Iterate through all potential Proton locations"""
+    yield PROTON_DIR
+
     try:
         steamapp_dirs = get_steamapps_dirs()
     except:
         return  # in case of corrupt or unreadable Steam configuration files!
 
     for path in [os.path.join(p, "common") for p in steamapp_dirs]:
-        if os.path.isdir(path):
-            yield path
+        yield path
+
     for path in [os.path.join(p, "") for p in steamapp_dirs]:
-        if os.path.isdir(path):
-            yield path
-
-
-def get_proton_paths() -> List[str]:
-    """Get the Folder that contains all the Proton versions. Can probably be improved"""
-    paths = set()
-    for proton_path in _iter_proton_locations():
-        for version in [p for p in os.listdir(proton_path) if "Proton" in p]:
-            if system.path_exists(os.path.join(proton_path, version, "dist/bin/wine")):
-                paths.add(proton_path)
-            if system.path_exists(os.path.join(proton_path, version, "files/bin/wine")):
-                paths.add(proton_path)
-    return list(paths)
-
-
-def list_proton_versions() -> List[str]:
-    """Return the list of Proton versions installed in Steam"""
-    try:
-        # We can only use a Proton install via the Umu launcher script.
-        _ = get_umu_path()
-    except MissingExecutableError:
-        return []
-
-    versions = [GE_PROTON_LATEST]
-    for proton_path in get_proton_paths():
-        for version in [p for p in os.listdir(proton_path) if "Proton" in p]:
-            path = os.path.join(proton_path, version, "dist/bin/wine")
-            if os.path.isfile(path):
-                versions.append(version)
-            path = os.path.join(proton_path, version, "files/bin/wine")
-            if os.path.isfile(path):
-                versions.append(version)
-    return versions
-
-
-def get_proton_bin_for_version(version: str) -> str:
-    if version == GE_PROTON_LATEST:
-        return get_umu_path()
-
-    for proton_path in get_proton_paths():
-        path = os.path.join(proton_path, version, "dist/bin/wine")
-        if os.path.isfile(path):
-            return path
-        path = os.path.join(proton_path, version, "files/bin/wine")
-        if os.path.isfile(path):
-            return path
-
-    raise MissingExecutableError("The Proton bin for Wine version '%s' could not be found." % version)
+        yield path
 
 
 def update_proton_env(wine_path: str, env: Dict[str, str], game_id: str = DEFAULT_GAMEID, umu_log: str = None) -> None:
@@ -142,10 +159,9 @@ def update_proton_env(wine_path: str, env: Dict[str, str], game_id: str = DEFAUL
     GAMEID if you don't pass one in.
 
     This also propagates LC_ALL to HOST_LC_ALL, if LC_ALL is set."""
+
     if "PROTONPATH" not in env:
-        protonpath = _get_proton_path_from_bin(wine_path)
-        if protonpath:
-            env["PROTONPATH"] = protonpath
+        env["PROTONPATH"] = get_proton_path_by_path(wine_path)
 
     if "GAMEID" not in env:
         env["GAMEID"] = game_id
@@ -156,28 +172,20 @@ def update_proton_env(wine_path: str, env: Dict[str, str], game_id: str = DEFAUL
     if "WINEARCH" not in env:
         env["WINEARCH"] = "win64"
 
+    if "PROTON_VERB" not in env:
+        # Proton fixes are only applied with waitforexitandrun, so we want to use that
+        # but only if we're the first process start - the next concurrent process should
+        # use run so it does not wait.
+        prefix = env.get("WINEPREFIX")
+        if prefix and prefix in (c.env.get("WINEPREFIX") for c in RUNNING_COMMANDS):
+            env["PROTON_VERB"] = "runinprefix"  # do *not* re-initialize a running prefix!
+        else:
+            env["PROTON_VERB"] = "waitforexitandrun"  # does full initialization with proton-fixes
+
     locale = env.get("LC_ALL")
     host_locale = env.get("HOST_LC_ALL")
     if locale and not host_locale:
         env["HOST_LC_ALL"] = locale
-
-
-def _get_proton_path_from_bin(wine_path: str) -> Optional[str]:
-    """Return a location suitable for PROTONPATH from the wine executable; if
-    None, we leave PROTONPATH unset."""
-    if is_umu_path(wine_path):
-        return "GE-Proton"  # Download the latest Glorious Proton build
-
-    # In stable versions of proton this can be dist/bin instead of files/bin
-    if "/files/bin/" in wine_path:
-        return wine_path[: wine_path.index("/files/bin/")]
-    else:
-        try:
-            return wine_path[: wine_path.index("/dist/bin/")]
-        except ValueError:
-            pass
-
-    return os.path.abspath(os.path.join(os.path.dirname(wine_path), "../../"))
 
 
 def get_game_id(game, env) -> str:

@@ -3,17 +3,17 @@
 import os
 from collections import OrderedDict
 from gettext import gettext as _
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from lutris import settings
-from lutris.api import get_default_wine_runner_version_info
-from lutris.exceptions import MisconfigurationError, UnavailableRunnerError, UnspecifiedVersionError
+from lutris.exceptions import MisconfigurationError, UnspecifiedVersionError
 from lutris.util import cache_single, linux, system
 from lutris.util.log import logger
-from lutris.util.strings import parse_version
+from lutris.util.strings import get_natural_sort_key, parse_version
 from lutris.util.wine import fsync, proton
 
 WINE_DIR: str = os.path.join(settings.RUNNER_DIR, "wine")
+
 WINE_DEFAULT_ARCH: str = "win64" if linux.LINUX_SYSTEM.is_64_bit else "win32"
 WINE_PATHS: Dict[str, str] = {
     "winehq-devel": "/opt/wine-devel/bin/wine",
@@ -24,11 +24,12 @@ WINE_PATHS: Dict[str, str] = {
 
 # Insert additional system-wide Wine installations.
 try:
-    for _candidate in os.listdir("/usr/lib/"):
-        if _candidate.startswith("wine-"):
-            _wine_path = os.path.join("/usr/lib/", _candidate, "bin/wine")
-            if os.path.isfile(_wine_path):
-                WINE_PATHS["System " + _candidate] = _wine_path
+    if system.path_exists("/usr/lib"):
+        for _candidate in os.listdir("/usr/lib/"):
+            if _candidate.startswith("wine-"):
+                _wine_path = os.path.join("/usr/lib/", _candidate, "bin/wine")
+                if os.path.isfile(_wine_path):
+                    WINE_PATHS["System " + _candidate] = _wine_path
     _candidate = None
     _wine_path = None
 except Exception as ex:
@@ -37,10 +38,11 @@ except Exception as ex:
 
 def detect_arch(prefix_path: str = None, wine_path: str = None) -> str:
     """Given a Wine prefix path, return its architecture"""
+    if wine_path:
+        if proton.is_proton_path(wine_path) or system.path_exists(wine_path + "64"):
+            return "win64"
     if prefix_path and is_prefix_directory(prefix_path):
         return detect_prefix_arch(prefix_path)
-    if wine_path and system.path_exists(wine_path + "64"):
-        return "win64"
     return "win32"
 
 
@@ -103,7 +105,8 @@ def is_installed_systemwide() -> bool:
 
 def list_system_wine_versions() -> List[str]:
     """Return the list of wine versions installed on the system"""
-    return [name for name, path in WINE_PATHS.items() if get_system_wine_version(path)]
+    versions = [name for name, path in WINE_PATHS.items() if get_system_wine_version(path)]
+    return sorted(versions, key=get_natural_sort_key, reverse=True)
 
 
 def list_lutris_wine_versions() -> List[str]:
@@ -113,18 +116,50 @@ def list_lutris_wine_versions() -> List[str]:
     versions = []
     for dirname in version_sort(os.listdir(WINE_DIR), reverse=True):
         try:
-            wine_path = get_wine_path_for_version(version=dirname)
+            wine_path = os.path.join(WINE_DIR, dirname, "bin/wine")
             if wine_path and os.path.isfile(wine_path):
                 versions.append(dirname)
         except MisconfigurationError:
             pass  # if it's not properly installed, skip it
-    return versions
+    return sorted(versions, key=get_natural_sort_key, reverse=True)
 
 
 @cache_single
 def get_installed_wine_versions() -> List[str]:
-    """Return the list of Wine versions installed"""
-    return list_system_wine_versions() + list_lutris_wine_versions() + proton.list_proton_versions()
+    """Return the list of Wine versions installed, with no duplicates and in
+    the presentation order."""
+    versions = {}
+    for v in list_system_wine_versions():
+        if v not in versions:
+            versions[v] = v
+
+    for v in proton.list_proton_versions():
+        if v not in versions:
+            versions[v] = v
+
+    for v in list_lutris_wine_versions():
+        if v not in versions:
+            versions[v] = v
+
+    return list(versions.keys())
+
+
+def clear_wine_version_cache() -> None:
+    get_installed_wine_versions.cache_clear()
+    proton.get_proton_versions.cache_clear()
+    proton.get_umu_path.cache_clear()
+
+
+def get_runner_files_dir_for_version(version: str) -> Optional[str]:
+    """This returns the path to the root of the Wine files for a specific version. The
+    'bin' directory for that version is there, and we can place more directories there.
+    If we shouldn't do that, this will return None."""
+    if version in WINE_PATHS:
+        return None
+    elif proton.is_proton_version(version):
+        return os.path.join(proton.PROTON_DIR, version, "files")
+    else:
+        return os.path.join(WINE_DIR, version)
 
 
 def get_wine_path_for_version(version: str, config: dict = None) -> str:
@@ -138,8 +173,8 @@ def get_wine_path_for_version(version: str, config: dict = None) -> str:
 
     if version in WINE_PATHS:
         return system.find_required_executable(WINE_PATHS[version])
-    if proton.is_proton_path(version):
-        return proton.get_proton_bin_for_version(version)
+    if proton.is_proton_version(version):
+        return proton.get_proton_wine_path(version)
     if version == "custom":
         if config is None:
             raise RuntimeError("Custom wine paths are only supported when a configuration is available.")
@@ -183,15 +218,7 @@ def is_fsync_supported() -> bool:
 
 def get_default_wine_version() -> str:
     """Return the default version of wine."""
-    installed_versions = get_installed_wine_versions()
-    if installed_versions:
-        default_version = get_default_wine_runner_version_info()
-        if default_version and "version" in default_version and "architecture" in default_version:
-            version = default_version["version"] + "-" + default_version["architecture"]
-            if version in installed_versions:
-                return version
-        return installed_versions[0]
-    raise UnavailableRunnerError(_("No versions of Wine are installed."))
+    return "ge-proton"
 
 
 def get_system_wine_version(wine_path: str = "wine") -> str:

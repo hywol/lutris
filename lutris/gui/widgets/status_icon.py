@@ -1,13 +1,14 @@
-"""AppIndicator based tray icon"""
+"""AppIndicator/AyatanaAppIndicator based tray icon"""
 
 from gettext import gettext as _
 
 import gi
-from gi.repository import Gdk, Gtk
+from gi.repository import Gtk
 
+from lutris.database import categories
 from lutris.database.games import get_games
 from lutris.game import Game
-from lutris.util import cache_single
+from lutris.util.display import is_display_x11
 
 try:
     gi.require_version("AppIndicator3", "0.1")
@@ -15,16 +16,17 @@ try:
 
     APP_INDICATOR_SUPPORTED = True
 except (ImportError, ValueError):
-    APP_INDICATOR_SUPPORTED = False
+    try:
+        gi.require_version("AyatanaAppIndicator3", "0.1")
+        from gi.repository import AyatanaAppIndicator3 as AppIndicator
+
+        APP_INDICATOR_SUPPORTED = True
+    except (ImportError, ValueError):
+        APP_INDICATOR_SUPPORTED = False
 
 
-@cache_single
-def supports_status_icon():
-    if APP_INDICATOR_SUPPORTED:
-        return True
-
-    display = Gdk.Display.get_default()
-    return "x11" in type(display).__name__.casefold()
+def supports_status_icon() -> bool:
+    return bool(APP_INDICATOR_SUPPORTED or is_display_x11())
 
 
 class LutrisStatusIcon:
@@ -42,7 +44,7 @@ class LutrisStatusIcon:
             self.menu = self._get_menu()
             if APP_INDICATOR_SUPPORTED:
                 self.indicator = AppIndicator.Indicator.new(
-                    "net.lutris.Lutris", "lutris", AppIndicator.IndicatorCategory.APPLICATION_STATUS
+                    "net.lutris.Lutris", "net.lutris.Lutris", AppIndicator.IndicatorCategory.APPLICATION_STATUS
                 )
                 self.indicator.set_menu(self.menu)
             else:
@@ -83,7 +85,7 @@ class LutrisStatusIcon:
         menu.append(Gtk.SeparatorMenuItem())
 
         self.present_menu = Gtk.ImageMenuItem()
-        self.present_menu.set_image(Gtk.Image.new_from_icon_name("lutris", Gtk.IconSize.MENU))
+        self.present_menu.set_image(Gtk.Image.new_from_icon_name("net.lutris.Lutris", Gtk.IconSize.MENU))
         self.present_menu.set_label(_("Show Lutris"))
         self.present_menu.connect("activate", self.on_activate)
         menu.append(self.present_menu)
@@ -99,7 +101,7 @@ class LutrisStatusIcon:
         tray_icon = Gtk.StatusIcon()
         tray_icon.set_tooltip_text(_("Lutris"))
         tray_icon.set_visible(True)
-        tray_icon.set_from_icon_name("lutris")
+        tray_icon.set_from_icon_name("net.lutris.Lutris")
         return tray_icon
 
     def update_present_menu(self):
@@ -143,6 +145,8 @@ class LutrisStatusIcon:
     def _get_installed_games():
         """Adds installed games in order of last use"""
         installed_games = get_games(filters={"installed": 1})
+        hidden_game_ids = categories.get_game_ids_for_categories([".hidden"])
+        installed_games = [g for g in installed_games if g.get("id") not in hidden_game_ids]
         installed_games.sort(
             key=lambda game: max(game["lastplayed"] or 0, game["installed_at"] or 0),
             reverse=True,

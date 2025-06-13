@@ -35,12 +35,10 @@ class linux(Runner):
         },
         {
             "option": "working_dir",
-            "type": "directory_chooser",
+            "type": "directory",
             "label": _("Working directory"),
             "help": _(
-                "The location where the game is run from.\n"
-                "By default, Lutris uses the directory of the "
-                "executable."
+                "The location where the game is run from.\nBy default, Lutris uses the directory of the executable."
             ),
         },
         {
@@ -52,7 +50,7 @@ class linux(Runner):
         },
         {
             "option": "ld_library_path",
-            "type": "directory_chooser",
+            "type": "directory",
             "label": _("Add directory to LD_LIBRARY_PATH"),
             "advanced": True,
             "help": _(

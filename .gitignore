@@ -16,6 +16,8 @@ pga.db
 tests/coverage/*
 /dist
 /lutris.egg-info
+/flake.nix
+/flake.lock
 
 # meson builddirs
 builddir
@@ -30,6 +32,9 @@ venv
 .venv
 env
 .env
+
+# VS Codium files
+.vscode
 
 # glade recovery files
 *.ui~

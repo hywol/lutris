@@ -1,3 +1,45 @@
+lutris (0.5.20) jammy; urgency=medium
+
+  * Fix Proton integration bugs so Proton-fixes are applied
+  * Do not offer DXVK, VKD3D, D3D Extras or DDXVK-NVAPI on Proton versions; Proton will handle these.
+  * The "Enable Esync" and "Enable Fsync" settings are now passed on to Proton
+  * DXVK's integrated D8VK will be enabled in Proton
+  * Fix for updated Flathub API
+  * Emulator BIOS file location (used by libretro) may be set in Preferences
+  * Obtain the release year from GOG and Itch.io.
+  * MAME Machine setting uses a searchable entry for its enourmous list
+  * Support for importing Commodore 64 ROMs
+  * Redundant "Add Games" menu item removed; use the plus button in the corner
+  * "Manual Script" for the context menu will now see the game's environment variables
+
+-- Mathieu Comandon <mathieucomandon@gmail.com> Sun, 23 Feb 2025 10:55:10 -0800
+
+lutris (0.5.18) jammy; urgency=medium
+
+  * Lutris downloads the latest GE-Proton build for Wine if any Wine version is installed
+  * Use dark theme by default
+  * Display cover-art rather than banners by default
+  * Add 'Uncategorized' view to sidebar
+  * Preference options that do not work on Wayland will be hidden when on Wayland
+  * Game searches can now use fancy tags like 'installed:yes' or 'source:gog', with explanatory tool-tip
+  * A new filter button on the search box can build many of these fancy tags for you
+  * Runner searches can use 'installed:yes' as well, but no other fancy searches or anything
+  * Updated the Flathub and Amazon source to new APIs, restoring integration
+  * Itch.io source integration will load a collection named 'Lutris' if present
+  * GOG and Itch.io sources can now offer Linux and Windows installers for the same game
+  * Added support for the 'foot' terminal
+  * Support for DirectX 8 in DXVK v2.4
+  * Support for Ayatana Application Indicators
+  * Additional options for Ruffle runner
+  * Updated download links for the Atari800 and MicroM8 runners
+  * No longer re-download cached installation files even when some are missing
+  * Lutris log is included in the 'System' tab of the Preferences window
+  * Improved error reporting, with the Lutris log included in the error details
+  * Add AppArmor profile for Ubuntu versions >= 23.10
+  * Add Duckstation runner
+
+ -- Mathieu Comandon <mathieucomandon@gmail.com>  Sun, 1 Dec 2024 12:00:00 -0700
+
 lutris (0.5.17) jammy; urgency=medium
 
   * Fix critical bug preventing completion of installs if the script specifies a wine version

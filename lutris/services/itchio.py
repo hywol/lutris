@@ -73,20 +73,6 @@ class ItchIoGame(ServiceGame):
         return service_game
 
 
-class ItchIoGameTraits:
-    """Game Traits Helper Class"""
-
-    def __init__(self, traits):
-        self._traits = traits
-        self.windows = bool("p_windows" in traits)
-        self.linux = bool("p_linux" in traits)
-        self.can_be_bought = bool("can_be_bought" in traits)
-        self.has_demo = bool("has_demo" in traits)
-
-    def has_supported_platform(self):
-        return self.windows or self.linux
-
-
 class ItchIoService(OnlineService):
     """Service class for itch.io"""
 
@@ -106,15 +92,19 @@ class ItchIoService(OnlineService):
 
     api_url = "https://api.itch.io"
     login_url = "https://itch.io/login"
-    redirect_uri = "https://itch.io/my-feed"
+    redirect_uris = ["https://itch.io/my-feed", "https://itch.io/dashboard"]
     cookies_path = os.path.join(settings.CACHE_DIR, ".itchio.auth")
     cache_path = os.path.join(settings.CACHE_DIR, "itchio/api/")
 
     key_cache_file = os.path.join(cache_path, "profile/owned-keys.json")
+    collection_list_cache_file = os.path.join(cache_path, "profile/collections.json")
     games_cache_path = os.path.join(cache_path, "games/")
+    collection_cache_path = os.path.join(cache_path, "collections/")
     key_cache = {}
 
-    supported_platforms = ("p_linux", "p_windows")
+    runners_by_trait = {"p_linux": "linux", "p_windows": "wine"}
+    platforms_by_runner = {"wine": "Windows", "linux": "Linux"}
+
     extra_types = (
         "soundtrack",
         "book",
@@ -182,6 +172,18 @@ class ItchIoService(OnlineService):
     def fetch_owned_keys(self, query=None):
         """Do API request to get games owned by user (paginated)"""
         return self.make_api_request("profile/owned-keys", query)
+
+    def fetch_collections(self, query=None):
+        """Do API request to users collections"""
+        return self.make_api_request("profile/collections", query)
+
+    def fetch_collection(self, collection_id):
+        """Do API request to get info about a collection"""
+        return self.make_api_request(f"collections/{collection_id}")
+
+    def fetch_collection_games(self, collection_id, query=None):
+        """Do API request to get the list of games in a collection"""
+        return self.make_api_request(f"collections/{collection_id}/collection-games", query)
 
     def fetch_game(self, game_id):
         """Do API request to get game info"""
@@ -268,14 +270,124 @@ class ItchIoService(OnlineService):
             self._cache_games(games)
         return games
 
+    def get_collection_cache(self, collection_id):
+        """Create basic cache key based on collection slug and collection_id"""
+        return os.path.join(self.collection_cache_path, f"{collection_id}.json")
+
+    def _cache_collection(self, collection):
+        """Store information about collections in cache"""
+        os.makedirs(self.collection_cache_path, exist_ok=True)
+        filename = self.get_collection_cache(collection["id"])
+        key_path = os.path.join(self.collection_cache_path, filename)
+        with open(key_path, "w", encoding="utf-8") as cache_file:
+            json.dump(collection, cache_file)
+
+    def get_games_in_collections(self, collection_list: list, force_load=False):
+        """Get all games from a list of collections"""
+
+        games = []
+
+        known_appids = set()
+
+        # fetch collected games for each collection
+        for collection in collection_list:
+            fresh_data = True
+
+            collection_cache_path = self.get_collection_cache(collection["id"])
+
+            if (not force_load) and os.path.exists(collection_cache_path):
+                with open(collection_cache_path, "r", encoding="utf-8") as key_file:
+                    collection = json.load(key_file)
+                fresh_data = False
+            else:
+                # get the list of games in that collection
+                collection["games"] = []
+                query = {"page": 1}
+                # Basic security; I'm pretty sure itch.io will block us before that tho
+                safety = 65507
+                while safety:
+                    response = self.fetch_collection_games(collection["id"], query)
+                    if isinstance(response["collection_games"], list):
+                        collection["games"] += response["collection_games"]
+                        if len(response["collection_games"]) == int(response["per_page"]):
+                            query["page"] += 1
+                        else:
+                            break
+                    else:
+                        break
+                    safety -= 1
+
+                # filter out bad data for safety
+                collection["games"] = list(
+                    filter(lambda col_game: "game" in col_game and "id" in col_game["game"], collection["games"])
+                )
+
+                # try to get download keys from cache
+                for col_game in collection["games"]:
+                    game = col_game["game"]
+                    game_cache_path = self.get_game_cache(game["id"])
+                    if (
+                        "can_be_bought" in game.get("traits", [])
+                        and game.get("min_price", 0) > 0
+                        and os.path.exists(game_cache_path)
+                    ):
+                        with open(game_cache_path, "r", encoding="utf-8") as key_file:
+                            cached_game = json.load(key_file)
+                            if "download_key_id" in cached_game:
+                                game["download_key_id"] = cached_game["download_key_id"]
+
+                # cache the resulting collection
+                self._cache_collection(collection)
+
+            if fresh_data:
+                self._cache_games([col_game["game"] for col_game in collection["games"]])
+
+            for col_game in collection["games"]:
+                game = col_game["game"]
+                if game["id"] not in known_appids:
+                    known_appids.add(game["id"])
+                    games.append(game)
+        return games
+
+    def get_collection_list(self, force_load=False):
+        collections = []
+        if (not force_load) and os.path.exists(self.collection_list_cache_file):
+            with open(self.collection_list_cache_file, "r", encoding="utf-8") as key_file:
+                collections = json.load(key_file)
+        else:
+            collections = self.fetch_collections().get("collections", [])
+            with open(self.collection_list_cache_file, "w", encoding="utf-8") as key_file:
+                json.dump(collections, key_file)
+        return collections
+
     def get_games(self):
         """Return games from the user's library"""
-        games = self.get_owned_games()
+        # get and cache owned games
+        owned_games = self.get_owned_games()
+
+        # get all collections
+        collections = self.get_collection_list()
+
+        # if there is only one collecion, use owned games and this collection
+        if len(collections) == 1:
+            games = owned_games + self.get_games_in_collections(collections)
+        else:
+            # if there are collections titled "lutris" (case insestitive) we use only these
+            lutris_collections = list(
+                filter(lambda col: col.get("title", "").casefold() == "lutris" and "id" in col, collections)
+            )
+            if len(lutris_collections) > 0:
+                games = self.get_games_in_collections(lutris_collections)
+            # otherwise we just use all owned games
+            else:
+                games = self.get_owned_games()
+
         filtered_games = []
         for game in games:
-            traits = game.get("traits", {})
-            if any(platform in traits for platform in self.supported_platforms):
-                filtered_games.append(game)
+            classification = game.get("classification")
+            if not classification or classification == "game":
+                if self._get_detail_runners(game):
+                    filtered_games.append(game)
         return filtered_games
 
     def get_key(self, appid):
@@ -338,17 +450,45 @@ class ItchIoService(OnlineService):
             all_extras["Bonus Content"] = extras
         return all_extras
 
+    @staticmethod
+    def _get_detail_runners(details: Dict[str, Any], fix_missing_platforms: bool = True) -> List[str]:
+        """Extracts the runners available for a given game, given its details.
+        This test the traits for specific platforms, and returns the runners
+        in a priority order- Linux is first, which occasionally matters.
+
+        Normally, if a game has no platforms we'll assume a default set of runners,
+        but 'fix_missing_platforms' may be set to false to turn this off."""
+        runners = []
+        traits = details["traits"]
+        traits.clear
+        for trait, runner in ItchIoService.runners_by_trait.items():
+            if trait in traits:
+                runners.append(runner)
+
+        # Special case- some games don't list platform at all. If the game has
+        # no "p_" traits- not even "p_osx"- we can assume *all* our platforms are
+        # supported and hope for the best!
+
+        if fix_missing_platforms and not runners:
+            if not any(t for t in traits if t.startswith("p_")):
+                logger.warning(
+                    "The itch.io game '%s' has no platforms lists; Lutris will assume all supported runners will work.",
+                    details.get("title"),
+                )
+                return list(ItchIoService.runners_by_trait.values())
+
+        return runners
+
     def get_installed_slug(self, db_game):
         return db_game["slug"]
 
     def generate_installer(self, db_game: Dict[str, Any]) -> Dict[str, Any]:
         """Auto generate installer for itch.io game"""
         details = json.loads(db_game["details"])
+        runners = self._get_detail_runners(details)
 
-        if "p_linux" in details["traits"]:
-            return self._generate_installer("linux", db_game)
-        elif "p_windows" in details["traits"]:
-            return self._generate_installer("wine", db_game)
+        if runners:
+            return self._generate_installer(runners[0], db_game)
 
         logger.warning("No supported platforms found")
         return {}
@@ -357,13 +497,8 @@ class ItchIoService(OnlineService):
         """Auto generate installer for itch.io game"""
         details = json.loads(db_game["details"])
 
-        installers = []
-
-        if "p_linux" in details["traits"]:
-            installers.append(self._generate_installer("linux", db_game))
-
-        if "p_windows" in details["traits"]:
-            installers.append(self._generate_installer("wine", db_game))
+        runners = self._get_detail_runners(details)
+        installers = [self._generate_installer(runner, db_game) for runner in runners]
 
         if len(installers) > 1:
             for installer in installers:
@@ -400,27 +535,16 @@ class ItchIoService(OnlineService):
             },
         }
 
-    def get_installed_runner_name(self, db_game):
+    def get_installed_runner_name(self, db_game: Dict[str, Any]) -> str:
         details = json.loads(db_game["details"])
-
-        if "p_linux" in details["traits"]:
-            return "linux"
-        if "p_windows" in details["traits"]:
-            return "wine"
-
-        return ""
+        runners = self._get_detail_runners(details)
+        return runners[0] if runners else ""
 
     def get_game_platforms(self, db_game: dict) -> List[str]:
-        platforms = []
         details = json.loads(db_game["details"])
 
-        if "p_linux" in details["traits"]:
-            platforms.append("Linux")
-
-        if "p_windows" in details["traits"]:
-            platforms.append("Windows")
-
-        return platforms
+        runners = self._get_detail_runners(details, fix_missing_platforms=False)
+        return [self.platforms_by_runner[r] for r in runners]
 
     def _check_update_with_db(self, db_game, key, upload=None):
         stamp = 0
@@ -510,7 +634,9 @@ class ItchIoService(OnlineService):
                         "itchupload": {
                             "url": patch_url,
                             "filename": "update.zip",
-                            "downloader": Downloader(patch_url, None, overwrite=True, cookies=self.load_cookies()),
+                            "downloader": lambda f, url=patch_url: Downloader(
+                                url, f.download_file, overwrite=True, cookies=self.load_cookies()
+                            ),
                         }
                     }
                 ]
@@ -573,12 +699,11 @@ class ItchIoService(OnlineService):
                     continue
                 # default =  games/tools ("executables")
                 if upload["type"] == "default" and (installer.runner in ("linux", "wine")):
-                    is_linux = installer.runner == "linux" and "p_linux" in upload["traits"]
-                    is_windows = installer.runner == "wine" and "p_windows" in upload["traits"]
-                    is_demo = "demo" in upload["traits"]
-                    if not (is_linux or is_windows):
+                    upload_runners = self._get_detail_runners(upload)
+                    if installer.runner not in upload_runners:
                         continue
 
+                    is_demo = "demo" in upload["traits"]
                     upload["Weight"] = self.get_file_weight(upload["filename"], is_demo)
                     if upload["Weight"] == 0xFF:
                         continue
@@ -614,7 +739,9 @@ class ItchIoService(OnlineService):
                     {
                         "url": link,
                         "filename": filename or file.filename or "setup.zip",
-                        "downloader": Downloader(link, None, overwrite=True, cookies=self.load_cookies()),
+                        "downloader": lambda f, url=link: Downloader(
+                            url, f.download_file, overwrite=True, cookies=self.load_cookies()
+                        ),
                     },
                 )
             )
@@ -630,7 +757,9 @@ class ItchIoService(OnlineService):
                     {
                         "url": link,
                         "filename": extra["filename"],
-                        "downloader": Downloader(link, None, overwrite=True, cookies=self.load_cookies()),
+                        "downloader": lambda f, url=link: Downloader(
+                            url, f.download_file, overwrite=True, cookies=self.load_cookies()
+                        ),
                     },
                 )
             )
@@ -659,6 +788,20 @@ class ItchIoService(OnlineService):
         if demo:
             weight |= 0x40
         return weight
+
+    def get_game_release_date(self, db_game: dict):
+        details = db_game.get("details")
+        if details:
+            details = json.loads(details)
+            # Game Release
+            release_date = details.get("created_at")
+            if release_date is None:
+                # Last Update Release
+                release_date = details.get("published_at")
+            if release_date is not None and isinstance(release_date, str):
+                # Return as YYYY-MM-DD
+                return release_date[:10]
+        return ""
 
     def _rfc3999_to_timestamp(self, _s):
         # Python does ootb not fully comply with RFC3999; Cut after seconds

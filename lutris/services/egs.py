@@ -165,7 +165,7 @@ class EpicGamesStoreService(OnlineService):
         "https%3A//www.epicgames.com/id/api/redirect%3F"
         "clientId%3D34a02cf8f4414e29b15921876da36f9a%26responseType%3Dcode"
     )
-    redirect_uri = "https://www.epicgames.com/id/api/redirect"
+    redirect_uris = ["https://www.epicgames.com/id/api/redirect"]
     oauth_url = "https://account-public-service-prod03.ol.epicgames.com"
     catalog_url = "https://catalog-public-service-prod06.ol.epicgames.com"
     library_url = "https://library-service.live.use1a.on.epicgames.com"
@@ -182,11 +182,13 @@ class EpicGamesStoreService(OnlineService):
         super().__init__()
         self.session = requests.session()
         self.session.headers["User-Agent"] = self.user_agent
+        self.session_data = {}
         if os.path.exists(self.token_path):
-            with open(self.token_path, encoding="utf-8") as token_file:
-                self.session_data = json.loads(token_file.read())
-        else:
-            self.session_data = {}
+            try:
+                with open(self.token_path, encoding="utf-8") as token_file:
+                    self.session_data = json.loads(token_file.read())
+            except Exception as ex:
+                logger.exception("Unable to load token file '%s': %s", token_file, ex)
 
     @property
     def http_basic_auth(self):
@@ -414,4 +416,4 @@ class EpicGamesStoreService(OnlineService):
 
 
 def get_launch_arguments(app_name, action="launch"):
-    return ("-opengl" " -SkipBuildPatchPrereq" " -com.epicgames.launcher://apps/%s?action=%s") % (app_name, action)
+    return ("-opengl -SkipBuildPatchPrereq -com.epicgames.launcher://apps/%s?action=%s") % (app_name, action)

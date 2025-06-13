@@ -423,7 +423,18 @@ def is_removeable(path, system_config):
         return False
 
     parts = path.strip("/").split("/")
-    if parts[0] in ("usr", "var", "lib", "etc", "boot", "sbin", "bin"):
+
+    if not parts:
+        return False
+
+    if parts[0] == "var":
+        # Fedora Silverblue puts mount points under /var since they are mutable
+        # so we'll special case /var/mnt/<drive>/*.
+        if len(parts) > 3 and parts[1] in ("mnt", "media"):
+            return True
+        return False
+
+    if parts[0] in ("usr", "lib", "etc", "boot", "sbin", "bin"):
         # Path is part of the system folders
         return False
 
@@ -495,7 +506,7 @@ def reverse_expanduser(path):
     return path
 
 
-def path_contains(parent, child, resolve_symlinks=False):
+def path_contains(parent, child, resolve_symlinks=False) -> bool:
     """Tests if a child path is actually within a parent directory
     or a subdirectory of it. Resolves relative paths, and ~, and
     optionally symlinks."""
@@ -578,13 +589,19 @@ def update_desktop_icons():
         execute(["gtk-update-icon-cache", "-tf", os.path.join(settings.RUNTIME_DIR, "icons/hicolor")], quiet=True)
 
 
-def get_disk_size(path):
-    """Return the disk size in bytes of a folder"""
+def get_disk_size(path: str) -> int:
+    """Return the disk size in bytes of a file or folder"""
+
+    def get_file_size(file_path):
+        return os.stat(file_path).st_size
+
+    if os.path.isfile(path):
+        return get_file_size(path)
+
     total_size = 0
     for base, _dirs, files in os.walk(path):
-        total_size += sum(
-            os.stat(os.path.join(base, f)).st_size for f in files if os.path.isfile(os.path.join(base, f))
-        )
+        paths = [os.path.join(base, f) for f in files]
+        total_size += sum(get_file_size(p) for p in paths if os.path.isfile(p) and not os.path.islink(p))
     return total_size
 
 

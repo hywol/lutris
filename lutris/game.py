@@ -25,14 +25,19 @@ from lutris.installer import InstallationKind
 from lutris.monitored_command import MonitoredCommand
 from lutris.runner_interpreter import export_bash_script, get_launch_parameters
 from lutris.runners import import_runner, is_valid_runner_name
-from lutris.runners.runner import Runner
-from lutris.util import discord, extract, jobs, linux, strings, system, xdgshortcuts
-from lutris.util.display import DISPLAY_MANAGER, SCREEN_SAVER_INHIBITOR, disable_compositing, enable_compositing
+from lutris.runners.runner import Runner, kill_processes
+from lutris.util import busy, discord, extract, jobs, linux, strings, system, xdgshortcuts
+from lutris.util.display import (
+    DISPLAY_MANAGER,
+    SCREEN_SAVER_INHIBITOR,
+    disable_compositing,
+    enable_compositing,
+    is_display_x11,
+)
 from lutris.util.graphics.xephyr import get_xephyr_command
 from lutris.util.graphics.xrandr import turn_off_except
 from lutris.util.linux import LINUX_SYSTEM
 from lutris.util.log import LOG_BUFFERS, logger
-from lutris.util.process import Process
 from lutris.util.steam.shortcut import remove_shortcut as remove_steam_shortcut
 from lutris.util.system import fix_path_case
 from lutris.util.timer import Timer
@@ -179,7 +184,7 @@ class Game:
         if not self.is_db_stored:
             raise RuntimeError("Games that do not have IDs cannot belong to categories.")
 
-        category = categories_db.get_category(category_name)
+        category = categories_db.get_category_by_name(category_name)
         if category is None:
             category_id = categories_db.add_category(category_name)
         else:
@@ -194,7 +199,7 @@ class Game:
         if not self.is_db_stored:
             return
 
-        category = categories_db.get_category(category_name)
+        category = categories_db.get_category_by_name(category_name)
         if category is None:
             return
         category_id = category["id"]
@@ -386,7 +391,7 @@ class Game:
                 installers, service, self.appid, installation_kind=InstallationKind.UPDATE
             )
 
-        jobs.AsyncCall(service.get_update_installers, on_installers_ready, db_game)
+        busy.BusyAsyncCall(service.get_update_installers, on_installers_ready, db_game)
         return True
 
     def install_dlc(self, install_ui_delegate):
@@ -403,7 +408,7 @@ class Game:
             application = Gio.Application.get_default()
             application.show_installer_window(installers, service, self.appid, installation_kind=InstallationKind.DLC)
 
-        jobs.AsyncCall(service.get_dlc_installers_runner, on_installers_ready, db_game, db_game["runner"])
+        busy.BusyAsyncCall(service.get_dlc_installers_runner, on_installers_ready, db_game, db_game["runner"])
         return True
 
     def uninstall(self, delete_files: bool = False) -> None:
@@ -674,9 +679,6 @@ class Game:
             return False
         command, env = get_launch_parameters(self.runner, gameplay_info)
 
-        if env.get("WINEARCH") == "win32" and "umu" in " ".join(command):
-            raise RuntimeError("Proton is not compatible with 32bit prefixes")
-
         env["STORE"] = env.get("STORE") or self.get_store_name()
 
         # Some environment variables for the use of custom pre-launch and post-exit scripts.
@@ -696,7 +698,7 @@ class Game:
             self.game_runtime_config["working_dir"] = gameplay_info["working_dir"]
 
         # Input control
-        if self.runner.system_config.get("use_us_layout"):
+        if self.runner.system_config.get("use_us_layout") and is_display_x11():
             system.set_keyboard_layout("us")
 
         # Display control
@@ -806,7 +808,7 @@ class Game:
         # If force_stop_game fails, wait a few seconds and try SIGKILL on any survivors
 
         def force_stop_game():
-            self.runner.force_stop_game(self)
+            self.runner.force_stop_game(self.get_stop_pids())
             return not self.get_stop_pids()
 
         def force_stop_game_cb(all_dead, error):
@@ -817,7 +819,7 @@ class Game:
             else:
                 self.force_kill_delayed()
 
-        jobs.AsyncCall(force_stop_game, force_stop_game_cb)
+        busy.BusyAsyncCall(force_stop_game, force_stop_game_cb)
 
     def force_kill_delayed(self, death_watch_seconds=5, death_watch_interval_seconds=0.5):
         """Forces termination of a running game, but only after a set time has elapsed;
@@ -831,7 +833,7 @@ class Game:
                     return
 
             # Once we get past the time limit, starting killing!
-            self.kill_processes(signal.SIGKILL)
+            kill_processes(signal.SIGKILL, self.get_stop_pids())
 
         def death_watch_cb(_result, error):
             """Called after the death watch to more firmly kill any survivors."""
@@ -841,19 +843,7 @@ class Game:
             # If we still can't kill everything, we'll still say we stopped it.
             self.stop_game()
 
-        jobs.AsyncCall(death_watch, death_watch_cb)
-
-    def kill_processes(self, sig):
-        """Sends a signal to a process list, logging errors."""
-        pids = self.get_stop_pids()
-
-        for pid in pids:
-            try:
-                os.kill(int(pid), sig)
-            except ProcessLookupError as ex:
-                logger.debug("Failed to kill game process: %s", ex)
-            except PermissionError:
-                logger.debug("Permission to kill process %s denied", pid)
+        busy.BusyAsyncCall(death_watch, death_watch_cb)
 
     def get_stop_pids(self):
         """Finds the PIDs of processes that need killin'!"""
@@ -870,18 +860,8 @@ class Game:
             return set()
 
         new_pids = self.get_new_pids()
-
         game_folder = self.resolve_game_path()
-        folder_pids = set()
-        for pid in new_pids:
-            cmdline = Process(pid).cmdline or ""
-            # pressure-vessel: This could potentially pick up PIDs not started by lutris?
-            if game_folder in cmdline or "pressure-vessel" in cmdline:
-                folder_pids.add(pid)
-
-        uuid_pids = set(pid for pid in new_pids if Process(pid).environ.get("LUTRIS_GAME_UUID") == self.game_uuid)
-
-        return folder_pids & uuid_pids
+        return self.runner.filter_game_pids(new_pids, self.game_uuid, game_folder)
 
     def get_new_pids(self):
         """Return list of PIDs started since the game was launched"""
@@ -1004,7 +984,11 @@ class Game:
 
         # Clear Discord Client Status
         if settings.read_setting("discord_rpc") == "True" and self.discord_id:
-            discord.client.clear()
+            try:
+                discord.client.clear()
+            except:
+                # Shut up no one cares about you or your errors
+                pass
 
         self.process_return_codes()
 
@@ -1037,13 +1021,19 @@ class Game:
         old_location = self.directory
         target_directory = self._get_move_target_directory(new_location)
 
-        if system.path_contains(old_location, new_location):
+        if old_location and system.path_contains(old_location, new_location):
             raise InvalidGameMoveError(
                 _("Lutris can't move '%s' to a location inside of itself, '%s'.") % (old_location, new_location)
             )
 
         self.directory = target_directory
         self.save(no_signal=no_signal)
+
+        if not old_location:
+            # We can't move or update the config without an initial
+            # location, but no-one expects us to. We've just updated
+            # the game directory, and that will do.
+            return target_directory
 
         with open(self.config.game_config_path, encoding="utf-8") as config_file:
             for line in config_file.readlines():

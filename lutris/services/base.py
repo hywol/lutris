@@ -16,12 +16,13 @@ from lutris.database.games import add_game, get_game_by_field, get_game_for_serv
 from lutris.database.services import ServiceGameCollection
 from lutris.game import GAME_UPDATED, Game
 from lutris.gui.dialogs import NoticeDialog
-from lutris.gui.dialogs.webconnect_dialog import DEFAULT_USER_AGENT, WebConnectDialog
+from lutris.gui.dialogs.webconnect_dialog import WebConnectDialog
 from lutris.gui.views.media_loader import download_media
 from lutris.gui.widgets import NotificationSource
 from lutris.gui.widgets.utils import BANNER_SIZE, ICON_SIZE
 from lutris.services.service_media import ServiceMedia
 from lutris.util import system
+from lutris.util.busy import BusyAsyncCall
 from lutris.util.cookies import WebkitCookieJar
 from lutris.util.jobs import AsyncCall
 from lutris.util.log import logger
@@ -143,10 +144,12 @@ class BaseService:
                 self.load()
                 self.load_icons()
                 self.add_installed_games()
+                logger.debug("'%s' games reloaded", self.name)
             finally:
                 self.is_loading = False
 
         def reload_cb(_result, error):
+            logger.debug("Reload callback")
             SERVICE_GAMES_LOADED.fire(self)
             reloaded_callback(error)
 
@@ -158,6 +161,7 @@ class BaseService:
 
     def load_icons(self):
         """Download all game media from the service"""
+        logger.debug("Loading icons...")
         all_medias = self.medias.copy()
         all_medias.update(self.extra_medias)
 
@@ -204,7 +208,7 @@ class BaseService:
             application = Gio.Application.get_default()
             application.show_installer_window(service_installers, service=self, appid=appid)
 
-        AsyncCall(self.get_installers_from_api, on_installers_ready, appid)
+        BusyAsyncCall(self.get_installers_from_api, on_installers_ready, appid)
 
     def get_installer_files(self, installer, installer_file_id, selected_extras):
         """Used to obtains the content files from the service, when an 'N/A' file is left in
@@ -313,7 +317,6 @@ class BaseService:
             service_installers.extend(installers)
         if not service_installers:
             logger.error("No installer found for %s", db_game)
-            return
         return service_installers, db_game, None
 
     def install(self, db_game, update=False):
@@ -333,7 +336,7 @@ class BaseService:
         # be added without going through an install dialog.
         if self.local:
             return self.simple_install(db_game)
-        AsyncCall(self.get_service_installers, self.on_service_installers_loaded, db_game, update)
+        BusyAsyncCall(self.get_service_installers, self.on_service_installers_loaded, db_game, update)
 
     def install_by_id(self, appid):
         """Installs a game given the appid for the game on this service."""
@@ -379,7 +382,7 @@ class BaseService:
         """Services can implement this method to scan for locally
         installed games and add them to lutris.
 
-        This runs on a worker thread, and must trigger UI actions -
+        This runs on a worker thread, and must no trigger UI actions -
         so no emitting signals here.
         """
 
@@ -406,6 +409,17 @@ class BaseService:
             return ServiceGameCollection.get_game(self.id, game.appid)
         return None
 
+    def get_game_release_date(self, db_game: dict):
+        """Services can implement this method so games that are not in the
+        database can be sorted by release date (Year) based on service data."""
+
+    def get_game_release_year(self, db_game: dict):
+        """Returns game release year
+        Does not have to be rewritten if get_game_release_date returns
+        rfc/iso compatible date (YYYY-MM-DD)"""
+        date = self.get_game_release_date(db_game)
+        return date[:4] if date else ""
+
 
 class OnlineService(BaseService):
     """Base class for online gaming services"""
@@ -418,7 +432,8 @@ class OnlineService(BaseService):
     login_url = NotImplemented
     login_window_width = 390
     login_window_height = 500
-    login_user_agent = DEFAULT_USER_AGENT
+    login_user_agent = settings.DEFAULT_USER_AGENT
+    redirect_uris = NotImplemented
 
     @property
     def credential_files(self):
@@ -443,12 +458,12 @@ class OnlineService(BaseService):
 
     @property
     def is_login_in_progress(self) -> bool:
-        """Set to true if the login process is underway; the credential files make be created at this
+        """Set to true if the login process is underway; the credential files may be created at this
         time, but that does not count as 'authenticated' until the login process is over. This is used
         by WebConnectDialog since it creates its cookies before the login is actually complete.
 
         This is recorded with a file in ~/.cache/lutris so it will persist across Lutris
-        restarted, just as the credentials themselves do. For this reason, we need to allow
+        restarts, just as the credentials themselves do. For this reason, we need to allow
         the user to login again even when a login is in progress."""
         return self._get_login_in_progress_path().exists()
 
@@ -465,7 +480,10 @@ class OnlineService(BaseService):
 
     def is_authenticated(self):
         """Return whether the service is authenticated"""
-        return not self.is_login_in_progress and all(system.path_exists(path) for path in self.credential_files)
+        if self.is_login_in_progress:
+            logger.warning("Tried to get auth status while login in progress")
+            return False
+        return all(system.path_exists(path) for path in self.credential_files)
 
     def wipe_game_cache(self):
         """Wipe the game cache, allowing it to be reloaded"""

@@ -1,13 +1,9 @@
-import os
-
-from lutris.settings import RUNTIME_DIR
 from lutris.util.wine.dll_manager import DLLManager
 
 
 class D3DExtrasManager(DLLManager):
-    component = "D3D Extras"
-    base_dir = os.path.join(RUNTIME_DIR, "d3d_extras")
-    versions_path = os.path.join(base_dir, "d3d_extras_versions.json")
+    name = "d3d_extras"
+    human_name = "D3D Extras"
     managed_dlls = (
         "d3dx10_33",
         "d3dx10_34",
@@ -58,3 +54,4 @@ class D3DExtrasManager(DLLManager):
         "d3dcompiler_47",
     )
     releases_url = "https://api.github.com/repos/lutris/d3d_extras/releases"
+    proton_compatible = True

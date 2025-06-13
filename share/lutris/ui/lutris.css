@@ -8,12 +8,12 @@
   background-color: rgb(255, 199, 116);
 }
 
-.lutrissidebar button {
+.lutris-sidebar button {
   padding: 0;
   border: 0;
 }
 
-.lutrissidebar button > image {
+.lutris-sidebar button > image {
   padding: 0;
   border: 0;
 }
@@ -22,6 +22,14 @@
   background-color: alpha(currentColor, .07);
   border-radius: 5px;
   padding: 3px 6px;
+}
+
+.option-wrapper-assigned-here > label {
+    font-weight: bold;
+}
+
+.option-wrapper-non-default > label {
+    font-style: italic;
 }
 
 .section-frame {
@@ -33,6 +41,10 @@
 
 .section-frame > box {
 	margin-bottom: 6px;
+}
+
+.reset-button {
+    padding: 0px;
 }
 
 .info-frame {

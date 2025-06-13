@@ -10,7 +10,7 @@ from gettext import gettext as _
 from pathlib import Path
 
 from lutris import runtime
-from lutris.cache import get_cache_path, has_custom_cache_path
+from lutris.cache import is_file_in_custom_cache
 from lutris.exceptions import MissingExecutableError, UnspecifiedVersionError
 from lutris.installer.errors import ScriptingError
 from lutris.installer.installer import LutrisInstaller
@@ -36,19 +36,22 @@ class CommandsMixin:
         runner = self.get_runner_class(self.installer.runner)()
         version = runner.get_installer_runner_version(self.installer, use_runner_config=False)
         if version:
-            return get_wine_path_for_version(version)
+            wine_path = get_wine_path_for_version(version)
+            return wine_path
 
         # Special case that lets the Wine configuration explicit specify the path
         # to the Wine executable, not just a version number.
         if self.installer.runner == "wine":
             try:
                 config_version, runner_config = wine.get_runner_version_and_config()
-                return get_wine_path_for_version(config_version, config=runner_config.runner_level["wine"])
+                wine_path = get_wine_path_for_version(config_version, config=runner_config.runner_level["wine"])
+                return wine_path
             except UnspecifiedVersionError:
                 pass
 
         version = get_default_wine_version()
-        return get_wine_path_for_version(version)
+        wine_path = get_wine_path_for_version(version)
+        return wine_path
 
     def get_runner_class(self, runner_name):
         """Runner the runner class from its name"""
@@ -85,14 +88,6 @@ class CommandsMixin:
                         command_data,
                     )
 
-    @staticmethod
-    def _is_cached_file(file_path):
-        """Return whether a file referenced by file_id is stored in the cache"""
-        if not has_custom_cache_path():
-            return False
-        pga_cache_path = get_cache_path()
-        return file_path.startswith(pga_cache_path)
-
     def chmodx(self, filename):
         """Make filename executable"""
         filename = self._substitute(filename)
@@ -110,7 +105,7 @@ class CommandsMixin:
             self._check_required_params([("file", "command")], data, "execute")
             if "command" in data and "file" in data:
                 raise ScriptingError(
-                    _("Parameters file and command can't be used " "at the same time for the execute command"),
+                    _("Parameters file and command can't be used at the same time for the execute command"),
                     data,
                 )
 
@@ -323,7 +318,7 @@ class CommandsMixin:
                 logger.info("Destination file exists, skipping")
                 return
         try:
-            if self._is_cached_file(src):
+            if is_file_in_custom_cache(src):
                 action = shutil.copy
             else:
                 action = shutil.move
@@ -570,7 +565,7 @@ class CommandsMixin:
         game_id = arguments.split()[-1]
         arguments = " ".join(arguments.split()[:-1])
         base_dir = os.path.dirname(gog_config_path)
-        return {"game_id": game_id, "path": base_dir, "arguments": arguments}
+        return {"game_id": game_id, "path": base_dir, "args": arguments}
 
     def autosetup_gog_game(self, file_id, silent=False):
         """Automatically guess the best way to install a GOG game by inspecting its contents.

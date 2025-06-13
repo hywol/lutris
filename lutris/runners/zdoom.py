@@ -10,8 +10,8 @@ from lutris.util.strings import split_arguments
 
 class zdoom(Runner):
     # http://zdoom.org/wiki/Command_line_parameters
-    description = _("ZDoom DOOM Game Engine")
-    human_name = _("ZDoom")
+    description = _("GZDoom Game Engine")
+    human_name = _("GZDoom")
     platforms = [_("Linux")]
     runner_executable = "zdoom/gzdoom"
     flatpak_id = "org.zdoom.GZDoom"
@@ -30,9 +30,9 @@ class zdoom(Runner):
         },
         {
             "option": "files",
-            "type": "multiple",
+            "type": "multiple_file",
             "label": _("PWAD files"),
-            "help": _("Used to load one or more PWAD files which generally contain " "user-created levels."),
+            "help": _("Used to load one or more PWAD files which generally contain user-created levels."),
         },
         {
             "option": "warp",
@@ -42,7 +42,7 @@ class zdoom(Runner):
         },
         {
             "option": "savedir",
-            "type": "directory_chooser",
+            "type": "directory",
             "label": _("Save path"),
             "warn_if_non_writable_parent": True,
             "help": _("User-specified path where save files should be located."),

@@ -34,12 +34,8 @@ RUNNERS_CONFIG_DIR = os.path.join(CONFIG_DIR, "runners")
 
 SHADER_CACHE_DIR = os.path.join(CACHE_DIR, "shaders")
 INSTALLER_CACHE_DIR = os.path.join(CACHE_DIR, "installer")
-BANNER_PATH = os.path.join(CACHE_DIR, "banners")
-if not os.path.exists(BANNER_PATH):
-    BANNER_PATH = os.path.join(DATA_DIR, "banners")
-COVERART_PATH = os.path.join(CACHE_DIR, "coverart")
-if not os.path.exists(COVERART_PATH):
-    COVERART_PATH = os.path.join(DATA_DIR, "coverart")
+BANNER_PATH = os.path.join(DATA_DIR, "banners")
+COVERART_PATH = os.path.join(DATA_DIR, "coverart")
 
 RUNTIME_VERSIONS_PATH = os.path.join(CACHE_DIR, "versions.json")
 ICON_PATH = os.path.join(GLib.get_user_data_dir(), "icons", "hicolor", "128x128", "apps")
@@ -58,19 +54,22 @@ GAME_URL = SITE_URL + "/games/%s/"
 RUNTIME_URL = SITE_URL + "/api/runtimes"
 
 STEAM_API_KEY = sio.read_setting("steam_api_key") or "34C9698CEB394AB4401D65927C6B3752"
+STEAM_FAMILY_INCLUDE_OWN = sio.read_setting("steam_family_include_own", default="False")
 
 SHOW_MEDIA = os.environ.get("LUTRIS_HIDE_MEDIA") != "1" and sio.read_setting("hide_media") != "True"
 
 DEFAULT_RESOLUTION_WIDTH = sio.read_setting("default_resolution_width", default="1280")
 DEFAULT_RESOLUTION_HEIGHT = sio.read_setting("default_resolution_height", default="720")
 
+DEFAULT_USER_AGENT = "Mozilla/5.0 (X11; Linux x86_64; rv:128.0) Gecko/20100101 Firefox/128.0"
+
 UPDATE_CHANNEL_STABLE = "stable"
-UPDATE_CHANNEL_UMU = "umu"
 UPDATE_CHANNEL_UNSUPPORTED = "self-maintained"
 
 read_setting = sio.read_setting
 read_bool_setting = sio.read_bool_setting
 write_setting = sio.write_setting
+SETTINGS_CHANGED = sio.SETTINGS_CHANGED
 
 
 def get_lutris_directory_settings(directory):

@@ -5,7 +5,7 @@ from gettext import gettext as _
 
 from lutris.config import LutrisConfig, write_game_config
 from lutris.database.games import add_or_update, get_game_by_field
-from lutris.exceptions import UnavailableGameError
+from lutris.exceptions import AuthenticationError, UnavailableGameError
 from lutris.installer import AUTO_ELF_EXE, AUTO_WIN32_EXE
 from lutris.installer.errors import ScriptingError
 from lutris.installer.installer_file import InstallerFile
@@ -25,13 +25,18 @@ class LutrisInstaller:  # pylint: disable=too-many-instance-attributes
         self.interpreter = interpreter
         self.installer = installer
         self.is_update = False
-        self.version = installer["version"]
-        self.slug = installer["slug"]
-        self.year = installer.get("year")
-        self.runner = installer["runner"]
-        self.script = installer.get("script")
-        self.game_name = installer["name"]
-        self.game_slug = installer["game_slug"]
+
+        try:
+            self.version = installer["version"]
+            self.slug = installer["slug"]
+            self.year = installer.get("year")
+            self.runner = installer["runner"]
+            self.script = installer.get("script")
+            self.game_name = installer["name"]
+            self.game_slug = installer["game_slug"]
+        except KeyError as ex:
+            raise ScriptingError(_("The script was missing the '%s' key, which is required.") % ex.args[0]) from ex
+
         self.service = self.get_service(initial=service)
         self.service_appid = self.get_appid(installer, initial=appid)
         self.variables = self.script.get("variables", {})
@@ -174,8 +179,8 @@ class LutrisInstaller:  # pylint: disable=too-many-instance-attributes
                     content_files, extra_files = self.service.get_installer_files(self, installer_file_id, extras)
                     extra_file_paths = [path for f in extra_files for path in f.get_dest_files_by_id().values()]
                     installer_files = content_files + extra_files
-            except UnavailableGameError as ex:
-                logger.error("Game not available: %s", ex)
+            except (AuthenticationError, UnavailableGameError) as ex:
+                logger.exception("Game not available: %s", ex)
                 installer_files = None
 
             if installer_files:
@@ -250,21 +255,38 @@ class LutrisInstaller:  # pylint: disable=too-many-instance-attributes
             import_runner(self.runner)().adjust_installer_runner_config(installer_runner_config)
             config[self.runner] = installer_runner_config
 
+        game_config = config["game"]
+
+        entry_point_keys = ("iso", "rom", "main_file", "exe")
+
         if "game" in self.script:
             try:
-                config["game"].update(self.script["game"])
+                game_config.update(self.script["game"])
             except ValueError as err:
                 raise ScriptingError(_("Invalid 'game' section"), self.script["game"]) from err
-            config["game"] = self._substitute_config(config["game"])
-            if AUTO_ELF_EXE in config["game"].get("exe", ""):
-                config["game"]["exe"] = find_linux_game_executable(self.interpreter.target_path, make_executable=True)
-            elif AUTO_WIN32_EXE in config["game"].get("exe", ""):
-                config["game"]["exe"] = find_windows_game_executable(self.interpreter.target_path)
 
-            # Fix possible case differences
-            for key in ("iso", "rom", "main_file", "exe"):
-                if config["game"].get(key):
-                    config["game"][key] = fix_path_case(config["game"][key])
+        # Obsolete install scripts may have the entry point key at root level;
+        # we'll move them into the game-config if so, and if they are not already
+        # there. Add a warning because I'm sure this compatibility ship will get lost,
+        # and the scripts would be better updated.
+        for entry_point_key in entry_point_keys:
+            if entry_point_key in self.script and entry_point_key not in game_config:
+                logger.warning("Moving entry point '%s' from script root level to the game config", entry_point_key)
+                game_config[entry_point_key] = self.script[entry_point_key]
+
+        game_config = self._substitute_config(game_config)
+        if AUTO_ELF_EXE in game_config.get("exe", ""):
+            game_config["exe"] = find_linux_game_executable(self.interpreter.target_path, make_executable=True)
+        elif AUTO_WIN32_EXE in game_config.get("exe", ""):
+            game_config["exe"] = find_windows_game_executable(self.interpreter.target_path)
+
+        # Fix possible case differences
+        for key in entry_point_keys:
+            entry_point = game_config.get(key)
+            if entry_point:
+                game_config[key] = fix_path_case(entry_point)
+
+        config["game"] = game_config
         config["name"] = self.game_name
         config["script"] = self.script
         config["variables"] = self.variables

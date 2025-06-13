@@ -46,6 +46,13 @@ def get_default_dpi():
     return 96
 
 
+@cache_single
+def is_display_x11():
+    """True if"""
+    display = Gdk.Display.get_default()
+    return "x11" in type(display).__name__.casefold()
+
+
 class DisplayManager:
     """Get display and resolution using GnomeDesktop"""
 
@@ -140,17 +147,11 @@ class DesktopEnvironment(enum.Enum):
 # These desktop environment use a compositor that can be detected with a specific
 # command, and which provide a definite answer; the DE can be asked to start and stop it..
 _compositor_commands_by_de = {
-    DesktopEnvironment.PLASMA: {
-        "check": ["qdbus", "org.kde.KWin", "/Compositor", "org.kde.kwin.Compositing.active"],
-        "active_result": b"true\n",
-        "stop_compositor": ["qdbus", "org.kde.KWin", "/Compositor", "org.kde.kwin.Compositing.suspend"],
-        "start_compositor": ["qdbus", "org.kde.KWin", "/Compositor", "org.kde.kwin.Compositing.resume"],
-    },
     DesktopEnvironment.MATE: {
-        "check": ["gsettings", "get org.mate.Marco.general", "compositing-manager"],
+        "check": ["gsettings", "get", "org.mate.Marco.general", "compositing-manager"],
         "active_result": b"true\n",
-        "stop_compositor": ["gsettings", "set org.mate.Marco.general", "compositing-manager", "false"],
-        "start_compositor": ["gsettings", "set org.mate.Marco.general", "compositing-manager", "true"],
+        "stop_compositor": ["gsettings", "set", "org.mate.Marco.general", "compositing-manager", "false"],
+        "start_compositor": ["gsettings", "set", "org.mate.Marco.general", "compositing-manager", "true"],
     },
     DesktopEnvironment.XFCE: {
         "check": ["xfconf-query", "--channel=xfwm4", "--property=/general/use_compositing"],
@@ -343,10 +344,10 @@ def enable_compositing():
 
 
 class DBusScreenSaverInhibitor:
-    """Inhibit and uninhibit the screen saver using DBus.
+    """Inhibit and uninhibit the suspend using DBus.
 
-    It will use the Gtk.Application's inhibit and uninhibit methods to inhibit
-    the screen saver.
+    It will use the Gtk.Application's inhibit and uninhibit methods to
+    prevent the computer from going to sleep.
 
     For enviroments which don't support either org.freedesktop.ScreenSaver or
     org.gnome.ScreenSaver interfaces one can declare a DBus interface which
@@ -363,7 +364,7 @@ class DBusScreenSaverInhibitor:
         )
 
     def inhibit(self, game_name):
-        """Inhibit the screen saver.
+        """Inhibit suspend.
         Returns a cookie that must be passed to the corresponding uninhibit() call.
         If an error occurs, None is returned instead."""
         reason = "Running game: %s" % game_name
@@ -386,7 +387,7 @@ class DBusScreenSaverInhibitor:
             return cookie
 
     def uninhibit(self, cookie):
-        """Uninhibit the screen saver.
+        """Uninhibit suspend.
         Takes a cookie as returned by inhibit. If cookie is None, no action is taken."""
         if not cookie:
             return
@@ -398,8 +399,8 @@ class DBusScreenSaverInhibitor:
             app.uninhibit(cookie)
 
 
-def _get_screen_saver_inhibitor():
-    """Return the appropriate screen saver inhibitor instance.
+def _get_suspend_inhibitor():
+    """Return the appropriate suspend inhibitor instance.
     If the required interface isn't available, it will default to GTK's
     implementation."""
     desktop_environment = get_desktop_environment()
@@ -425,10 +426,10 @@ def _get_screen_saver_inhibitor():
             inhibitor.set_dbus_iface(name, path, interface)
         except GLib.Error as err:
             logger.warning(
-                "Failed to set up a DBus proxy for name %s, path %s, " "interface %s: %s", name, path, interface, err
+                "Failed to set up a DBus proxy for name %s, path %s, interface %s: %s", name, path, interface, err
             )
 
     return inhibitor
 
 
-SCREEN_SAVER_INHIBITOR = _get_screen_saver_inhibitor()
+SCREEN_SAVER_INHIBITOR = _get_suspend_inhibitor()

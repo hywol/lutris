@@ -3,7 +3,7 @@ from typing import Callable
 from gi.repository import Gtk
 
 from lutris import settings
-from lutris.gui.config.boxes import UnderslungMessageBox
+from lutris.gui.config.widget_generator import WidgetWarningMessageBox
 from lutris.gui.widgets.common import VBox
 
 
@@ -33,6 +33,7 @@ class BaseConfigBox(VBox):
 
     def _get_framed_options_list_box(self, items):
         frame = Gtk.Frame(visible=True, shadow_type=Gtk.ShadowType.ETCHED_IN)
+
         list_box = Gtk.ListBox(visible=True, selection_mode=Gtk.SelectionMode.NONE)
         frame.add(list_box)
 
@@ -45,6 +46,7 @@ class BaseConfigBox(VBox):
         setting_key: str,
         label: str,
         default: bool = False,
+        accelerator: str = None,
         warning_markup: str = None,
         warning_condition: Callable[[bool], bool] = None,
         extra_widget: Gtk.Widget = None,
@@ -52,7 +54,7 @@ class BaseConfigBox(VBox):
         setting_value = settings.read_bool_setting(setting_key, default=default)
 
         if not warning_markup and not extra_widget:
-            box = self._get_inner_settings_box(setting_key, setting_value, label)
+            box = self._get_inner_settings_box(setting_key, setting_value, label, accelerator)
         else:
             if warning_markup:
 
@@ -60,10 +62,10 @@ class BaseConfigBox(VBox):
                     visible = warning_condition(active) if bool(warning_condition) else active
                     warning_box.show_markup(warning_markup if visible else None)
 
-                warning_box = UnderslungMessageBox("dialog-warning", margin_left=0, margin_right=0, margin_bottom=0)
+                warning_box = WidgetWarningMessageBox("dialog-warning", margin_left=0, margin_right=0, margin_bottom=0)
                 update_warning(setting_value)
                 inner_box = self._get_inner_settings_box(
-                    setting_key, setting_value, label, margin=0, when_setting_changed=update_warning
+                    setting_key, setting_value, label, accelerator, margin=0, when_setting_changed=update_warning
                 )
             else:
                 warning_box = None
@@ -71,6 +73,7 @@ class BaseConfigBox(VBox):
                     setting_key,
                     setting_value,
                     label,
+                    accelerator,
                     margin=0,
                 )
 
@@ -92,6 +95,7 @@ class BaseConfigBox(VBox):
         setting_key: str,
         setting_value: bool,
         label: str,
+        accelerator: str = None,
         margin: int = 12,
         when_setting_changed: Callable[[bool], None] = None,
     ):
@@ -99,8 +103,8 @@ class BaseConfigBox(VBox):
         checkbox.set_active(setting_value)
         checkbox.connect("state-set", self.on_setting_change, setting_key, when_setting_changed)
 
-        if setting_key in self.settings_accelerators:
-            key, mod = Gtk.accelerator_parse(self.settings_accelerators[setting_key])
+        if accelerator:
+            key, mod = Gtk.accelerator_parse(accelerator)
             checkbox.add_accelerator("activate", self.accelerators, key, mod, Gtk.AccelFlags.VISIBLE)
 
         return self.get_listed_widget_box(label, checkbox, margin=margin)
@@ -118,6 +122,5 @@ class BaseConfigBox(VBox):
     ) -> None:
         """Save a setting when an option is toggled"""
         settings.write_setting(setting_key, state)
-        self.get_toplevel().emit("settings-changed", state, setting_key)
         if when_setting_changed:
             when_setting_changed(state)

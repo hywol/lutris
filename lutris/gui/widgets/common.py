@@ -249,7 +249,7 @@ class FileChooserEntry(Gtk.Box):
         if self.warn_if_non_empty and os.path.exists(path) and os.listdir(path):
             non_empty_label = Gtk.Label(visible=True)
             non_empty_label.set_markup(
-                _("<b>Warning!</b> The selected path " "contains files. Installation will not work properly.")
+                _("<b>Warning!</b> The selected path contains files. Installation will not work properly.")
             )
             self.pack_end(non_empty_label, False, False, 10)
         if self.warn_if_non_writable_parent:
@@ -257,7 +257,7 @@ class FileChooserEntry(Gtk.Box):
             if parent is not None and not os.access(parent, os.W_OK):
                 non_writable_destination_label = Gtk.Label(visible=True)
                 non_writable_destination_label.set_markup(
-                    _("<b>Warning</b> The destination folder " "is not writable by the current user.")
+                    _("<b>Warning</b> The destination folder is not writable by the current user.")
                 )
                 self.pack_end(non_writable_destination_label, False, False, 10)
 
@@ -334,11 +334,11 @@ class FileChooserEntry(Gtk.Box):
 class Label(Gtk.Label):
     """Standardised label for config vboxes."""
 
-    def __init__(self, message=None, width_request=230):
+    def __init__(self, message=None, width_request=230, max_width_chars=22, visible=True):
         """Custom init of label."""
-        super().__init__(label=message, visible=True)
+        super().__init__(label=message, visible=visible)
         self.set_line_wrap(True)
-        self.set_max_width_chars(22)
+        self.set_max_width_chars(max_width_chars)
         self.set_line_wrap_mode(Pango.WrapMode.WORD_CHAR)
         self.set_size_request(width_request, -1)
         self.set_alignment(0, 0.5)
@@ -406,8 +406,9 @@ class EditableGrid(Gtk.Box):
     def on_delete(self, widget):  # pylint: disable=unused-argument
         selection = self.treeview.get_selection()
         _, iteration = selection.get_selected()
-        self.liststore.remove(iteration)
-        self.emit("changed")
+        if iteration:
+            self.liststore.remove(iteration)
+            self.emit("changed")
 
     def on_text_edited(self, widget, path, text, field):  # pylint: disable=unused-argument
         self.liststore[path][field] = text.strip()  # pylint: disable=unsubscriptable-object

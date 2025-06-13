@@ -1,9 +1,9 @@
 """Commonly used dialogs"""
 
+import builtins
 import inspect
 import os
 import traceback
-from builtins import BaseException
 from gettext import gettext as _
 from typing import Any, Callable, Dict, Type, TypeVar, Union
 
@@ -18,7 +18,7 @@ from lutris import api, settings
 from lutris.gui.widgets.log_text_view import LogTextView
 from lutris.util import datapath
 from lutris.util.jobs import schedule_at_idle
-from lutris.util.log import logger
+from lutris.util.log import get_log_contents, logger
 from lutris.util.strings import gtk_safe
 
 
@@ -275,14 +275,14 @@ class ErrorDialog(Gtk.MessageDialog):
 
     def __init__(
         self,
-        error: Union[str, BaseException],
+        error: Union[str, builtins.BaseException],
         message_markup: str = None,
         secondary: str = None,
         parent: Gtk.Window = None,
     ):
         super().__init__(message_type=Gtk.MessageType.ERROR, buttons=Gtk.ButtonsType.OK, parent=parent)
 
-        if isinstance(error, BaseException):
+        if isinstance(error, builtins.BaseException):
             if secondary:
                 # Some errors contain < and > and look like markup, but aren't-
                 # we'll need to protect the message dialog against this. To use markup,
@@ -316,7 +316,7 @@ class ErrorDialog(Gtk.MessageDialog):
             content_area.pack_end(details_expander, False, False, 0)
 
             action_area = self.get_action_area()
-            copy_button = Gtk.Button(_("Copy to Clipboard"), visible=True)
+            copy_button = Gtk.Button(_("Copy Details to Clipboard"), visible=True)
             action_area.pack_start(copy_button, False, True, 0)
             action_area.set_child_secondary(copy_button, True)
             copy_button.connect("clicked", self.on_copy_clicked, error)
@@ -331,11 +331,25 @@ class ErrorDialog(Gtk.MessageDialog):
 
     def get_details_expander(self, error: BaseException) -> Gtk.Widget:
         details = self.format_error(error, include_message=False)
+
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        label = Gtk.Label(xalign=0.0, wrap=True, margin_left=6, margin_right=6, margin_bottom=6)
+        label.set_markup(
+            _(
+                "You can get support from "
+                "<a href='https://github.com/lutris/lutris'>GitHub</a> or "
+                "<a href='https://discordapp.com/invite/Pnt5CuY'>Discord</a>. "
+                "Make sure to provide the error details;\n"
+                "use the 'Copy Details to Clipboard' button to get them."
+            )
+        )
+        box.pack_start(label, False, False, 0)
+
         expander = Gtk.Expander.new(_("Error details"))
 
         details_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
 
-        details_box.pack_start(Gtk.Separator(margin_top=6), False, False, 0)
+        details_box.pack_start(Gtk.Separator(), False, False, 0)
 
         details_textview = Gtk.TextView(editable=False)
         details_textview.get_buffer().set_text(details)
@@ -344,15 +358,23 @@ class ErrorDialog(Gtk.MessageDialog):
         details_scrolledwindow.add(details_textview)
         details_box.pack_start(details_scrolledwindow, False, False, 0)
         expander.add(details_box)
-        expander.show_all()
-        return expander
+
+        box.pack_start(expander, True, True, 0)
+        box.show_all()
+        return box
 
     @staticmethod
     def format_error(error: BaseException, include_message: bool = True):
         formatted = traceback.format_exception(type(error), error, error.__traceback__)
         if include_message:
             formatted = [str(error), ""] + formatted
-        return "\n".join(formatted).strip()
+        text = "\n".join(formatted).strip()
+        log = get_log_contents()
+
+        if log:
+            text = f"{text}\n\nLutris log:\n{log}".strip()
+
+        return text
 
 
 class QuestionDialog(Gtk.MessageDialog):
@@ -559,8 +581,8 @@ class ClientLoginDialog(GtkBuilderDialog):
         if not token:
             NoticeDialog(_("Login failed"), parent=self.parent)
         else:
-            self.emit("connected", username)
             self.dialog.destroy()
+            self.emit("connected", username)
 
 
 class InstallerSourceDialog(ModelessDialog):
@@ -568,7 +590,7 @@ class InstallerSourceDialog(ModelessDialog):
 
     def __init__(self, code, name, parent):
         super().__init__(title=_("Install script for {}").format(name), parent=parent, border_width=0)
-        self.set_size_request(500, 350)
+        self.set_default_size(800, 750)
 
         ok_button = self.add_default_button(Gtk.STOCK_OK, Gtk.ResponseType.OK)
         ok_button.set_border_width(10)

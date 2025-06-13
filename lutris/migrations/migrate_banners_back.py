@@ -1,4 +1,4 @@
-"""Migrate banners from .local/share/lutris to .cache/lutris"""
+"""Migrate banners and coverart from .cache/lutris to .local/share/lutris"""
 
 import os
 
@@ -6,9 +6,9 @@ from lutris import settings
 from lutris.util.log import logger
 
 
-def migrate():
-    dest_dir = settings.BANNER_PATH
-    src_dir = os.path.join(settings.DATA_DIR, "banners")
+def _migrate(dirname):
+    dest_dir = os.path.join(settings.DATA_DIR, dirname)
+    src_dir = os.path.join(settings.CACHE_DIR, dirname)
 
     try:
         # init_lutris() creates the new banners directory
@@ -26,3 +26,8 @@ def migrate():
                 os.rmdir(src_dir)
     except OSError as ex:
         logger.exception("Failed to migrate banners: %s", ex)
+
+
+def migrate():
+    _migrate("banners")
+    _migrate("coverart")

@@ -111,7 +111,7 @@ class mame(Runner):  # pylint: disable=invalid-name
                 (_("CD-ROM"), "cdrm"),
                 (_("CD-ROM 1"), "cdrm1"),
                 (_("CD-ROM 2"), "cdrm2"),
-                (_("Snapshot"), "dump"),
+                (_("Snapshot (dump)"), "dump"),
                 (_("Quickload"), "quickload"),
                 (_("Memory Card"), "memc"),
                 (_("Cylinder"), "cyln"),
@@ -137,9 +137,7 @@ class mame(Runner):  # pylint: disable=invalid-name
             "type": "string",
             "section": _("Autoboot"),
             "label": _("Autoboot command"),
-            "help": _(
-                "Autotype this command when the system has started, " "an enter keypress is automatically added."
-            ),
+            "help": _("Autotype this command when the system has started, an enter keypress is automatically added."),
         },
         {
             "option": "autoboot_delay",
@@ -154,7 +152,7 @@ class mame(Runner):  # pylint: disable=invalid-name
     runner_options = [
         {
             "option": "rompath",
-            "type": "directory_chooser",
+            "type": "directory",
             "label": _("ROM/BIOS path"),
             "help": _(
                 "Choose the folder containing ROMs and BIOS files.\n"
@@ -174,8 +172,17 @@ class mame(Runner):  # pylint: disable=invalid-name
             "type": "bool",
             "section": _("Graphics"),
             "label": _("CRT effect ()"),
-            "help": _("Applies a CRT effect to the screen." "Requires OpenGL renderer."),
+            "help": _("Applies a CRT effect to the screen.Requires OpenGL renderer."),
             "default": False,
+        },
+        {
+            "option": "verbose",
+            "type": "bool",
+            "section": _("Debugging"),
+            "label": _("Verbose"),
+            "help": _("display additional diagnostic information."),
+            "default": False,
+            "advanced": True,
         },
         {
             "option": "video",
@@ -196,9 +203,7 @@ class mame(Runner):  # pylint: disable=invalid-name
             "type": "bool",
             "section": _("Graphics"),
             "label": _("Wait for VSync"),
-            "help": _(
-                "Enable waiting for  the  start  of  vblank  before " "flipping  screens; reduces tearing effects."
-            ),
+            "help": _("Enable waiting for  the  start  of  vblank  before flipping  screens; reduces tearing effects."),
             "advanced": True,
             "default": False,
         },
@@ -220,7 +225,7 @@ class mame(Runner):  # pylint: disable=invalid-name
             ],
             "default": "SCRLOCK",
             "advanced": True,
-            "help": _("Key to switch between Full Keyboard Mode and " "Partial Keyboard Mode (default: Scroll Lock)"),
+            "help": _("Key to switch between Full Keyboard Mode and Partial Keyboard Mode (default: Scroll Lock)"),
         },
     ]
 
@@ -238,7 +243,12 @@ class mame(Runner):  # pylint: disable=invalid-name
 
     def install(self, install_ui_delegate, version=None, callback=None):
         def on_runner_installed(*args):
-            AsyncCall(write_mame_xml, notify_mame_xml)
+            def on_mame_ready(result, error):
+                notify_mame_xml(result, error)
+                if callback:
+                    callback(*args)
+
+            AsyncCall(write_mame_xml, on_mame_ready)
 
         super().install(install_ui_delegate, version=version, callback=on_runner_installed)
 
@@ -311,6 +321,9 @@ class mame(Runner):  # pylint: disable=invalid-name
         if self.runner_config.get("crt"):
             command += self.get_shader_params("CRT-geom", ["Gaussx", "Gaussy", "CRT-geom-halation"])
             command += ["-nounevenstretch"]
+
+        if self.runner_config.get("verbose"):
+            command += ["-verbose", "-oslog", "-log"]
 
         if self.game_config.get("machine"):
             rompath = self.runner_config.get("rompath")
